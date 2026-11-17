@@ -19,6 +19,9 @@ venv/
 *.pck
 *.zip
 
+# 本地验证截图
+.screenshots/
+
 # .NET 构建产物
 bin/
 obj/
