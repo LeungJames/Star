@@ -13,6 +13,7 @@ public partial class BattleManager : Node3D
     private static readonly HexCoord TankSpawn = new(0, 2);
     private static readonly HexCoord TruckSpawn = new(-3, 3);
     private static readonly HexCoord AirSpawn = new(2, -3);
+    private static readonly HexCoord InfantrySpawn = new(-1, 0);
     private static readonly HexCoord EnemyHeavySpawn = new(6, 0);
     private static readonly HexCoord EnemyLightSpawn = new(-5, -2);
 
@@ -43,6 +44,7 @@ public partial class BattleManager : Node3D
     private Label _infoLabel;
     private Label _messageLabel;
     private float _messageTimer;
+    private EnemyCommander _enemyCommander;
 
     public override void _Ready()
     {
@@ -52,6 +54,8 @@ public partial class BattleManager : Node3D
         _map.ClearAround(AirSpawn, 2);
         _map.ClearAround(EnemyHeavySpawn, 1);
         _map.ClearAround(EnemyLightSpawn, 1);
+        _map.ClearAround(InfantrySpawn, 1);
+        PlaceRuins();
 
         SetupEnvironment();
         BuildMapVisual();
@@ -61,6 +65,7 @@ public partial class BattleManager : Node3D
         SetupHud();
         SpawnFormations();
         UpdateVisibility();
+        _enemyCommander = new EnemyCommander(this);
 
         ShowMessage("左键选中编队，右键下达移动命令");
     }
@@ -68,6 +73,7 @@ public partial class BattleManager : Node3D
     public override void _Process(double delta)
     {
         float dt = (float)delta;
+        _enemyCommander.Update(dt);
         UpdateMovement(dt);
         UpdateRefuel(dt);
         UpdateVisibility();
@@ -129,6 +135,11 @@ public partial class BattleManager : Node3D
             AlbedoColor = new Color(0.24f, 0.3f, 0.21f),
             Roughness = 0.95f,
         };
+        var ruinMaterial = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.37f, 0.31f, 0.22f),
+            Roughness = 1f,
+        };
         var blockedMaterial = new StandardMaterial3D
         {
             AlbedoColor = new Color(0.17f, 0.16f, 0.15f),
@@ -155,14 +166,28 @@ public partial class BattleManager : Node3D
         foreach (var coord in _map.Cells())
         {
             bool blocked = _map.IsBlocked(coord);
+            bool ruins = _map.IsRuins(coord);
             var tile = new MeshInstance3D
             {
                 Mesh = blocked ? blockedMesh : freeMesh,
-                MaterialOverride = blocked ? blockedMaterial : freeMaterial,
+                MaterialOverride = blocked ? blockedMaterial : ruins ? ruinMaterial : freeMaterial,
                 Position = _map.ToWorld(coord) + new Vector3(0f, blocked ? 0.55f : 0.1f, 0f),
                 RotationDegrees = new Vector3(0f, 0f, 0f),
             };
             root.AddChild(tile);
+        }
+    }
+
+    private void PlaceRuins()
+    {
+        // 玩家侧与敌方重坦附近各留一小片废墟，便于验证步兵的废墟加成。
+        foreach (var coord in new[]
+                 {
+                     new HexCoord(-2, 1), new HexCoord(-1, 1), new HexCoord(-2, 2), new HexCoord(-1, 2),
+                     new HexCoord(4, 1), new HexCoord(5, 1), new HexCoord(4, 0), new HexCoord(5, 0),
+                 })
+        {
+            _map.AddRuins(coord);
         }
     }
 
@@ -355,7 +380,7 @@ public partial class BattleManager : Node3D
 
         var infoPanel = MakePanel(theme);
         _infoLabel = MakeLabel(string.Empty, theme);
-        _infoLabel.CustomMinimumSize = new Vector2(340f, 138f);
+        _infoLabel.CustomMinimumSize = new Vector2(360f, 162f);
         infoPanel.AddChild(_infoLabel);
         ui.AddChild(infoPanel);
         infoPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomLeft, Control.LayoutPresetMode.Minsize, 16);
@@ -404,6 +429,7 @@ public partial class BattleManager : Node3D
     private void SpawnFormations()
     {
         SpawnFormation(Formation.CreateLightTank(), TankSpawn);
+        SpawnFormation(Formation.CreateInfantry(), InfantrySpawn);
         SpawnFormation(Formation.CreateSupplyTruck(), TruckSpawn);
         SpawnFormation(Formation.CreateLightShip(), AirSpawn);
         SpawnFormation(Formation.CreateEnemyHeavyTank(), EnemyHeavySpawn);
@@ -430,6 +456,9 @@ public partial class BattleManager : Node3D
     }
 
     private Dictionary<HexCoord, Formation> TableOf(Formation formation) => formation.IsAir ? _air : _ground;
+
+    internal IReadOnlyList<Formation> Formations => _formations;
+    internal HexMap Map => _map;
 
     private void SelectAt(Vector2 screenPosition)
     {
@@ -485,43 +514,67 @@ public partial class BattleManager : Node3D
         IssueMove(_selected, _map.ToCoord(world));
     }
 
-    private bool IssueMove(Formation formation, HexCoord goal)
+    internal bool IssueMove(Formation formation, HexCoord goal, bool playerOrder = true)
     {
         if (!_map.Contains(goal))
         {
-            ShowMessage("目标超出地图范围");
+            if (playerOrder)
+            {
+                ShowMessage("目标超出地图范围");
+            }
+
             return false;
         }
 
         if (!formation.IsAir && _map.IsBlocked(goal))
         {
-            ShowMessage("目标格是阻挡地形，无法进入");
+            if (playerOrder)
+            {
+                ShowMessage("目标格是阻挡地形，无法进入");
+            }
+
             return false;
         }
 
         var table = TableOf(formation);
         if (table.TryGetValue(goal, out var occupant) && occupant != formation)
         {
-            ShowMessage("目标格已被占用，请绕行");
+            if (playerOrder)
+            {
+                ShowMessage("目标格已被占用，请绕行");
+            }
+
             return false;
         }
 
         if (goal.Equals(formation.Coord))
         {
-            ShowMessage("编队已在该格");
+            if (playerOrder)
+            {
+                ShowMessage("编队已在该格");
+            }
+
             return false;
         }
 
         if (formation.Fuel <= 0f)
         {
-            ShowMessage("燃油耗尽，无法移动");
+            if (playerOrder)
+            {
+                ShowMessage("燃油耗尽，无法移动");
+            }
+
             return false;
         }
 
         var path = Pathfinder.FindPath(_map, coord => IsBlockedFor(formation, coord), formation.Coord, goal);
         if (path == null)
         {
-            ShowMessage("找不到可通行路线");
+            if (playerOrder)
+            {
+                ShowMessage("找不到可通行路线");
+            }
+
             return false;
         }
 
@@ -535,7 +588,11 @@ public partial class BattleManager : Node3D
             formation.Reserved.Add(coord);
         }
 
-        DrawPathMarkers(formation);
+        if (playerOrder)
+        {
+            DrawPathMarkers(formation);
+        }
+
         return true;
     }
 
@@ -555,7 +612,7 @@ public partial class BattleManager : Node3D
         return table.TryGetValue(coord, out var owner) && owner != formation;
     }
 
-    private bool CanEnter(Formation formation, HexCoord coord)
+    internal bool CanEnter(Formation formation, HexCoord coord)
     {
         return !IsBlockedFor(formation, coord);
     }
@@ -782,7 +839,8 @@ public partial class BattleManager : Node3D
                 continue;
             }
 
-            float multiplier = PenetrationMultiplier(attacker.Penetration, target.Armor);
+            float penetration = EffectivePenetration(attacker, target);
+            float multiplier = PenetrationMultiplier(penetration, target.Armor);
             float dps = attacker.BaseDps * attacker.AttackScale * multiplier;
             pendingDamage[target] = pendingDamage.GetValueOrDefault(target) + dps * dt;
         }
@@ -832,21 +890,40 @@ public partial class BattleManager : Node3D
         return best;
     }
 
-    /// <summary>穿甲低于装甲时伤害显著衰减，最低保留 8%。</summary>
+    /// <summary>穿甲低于装甲时完全打不动；高于装甲时按差值折算。</summary>
     private static float PenetrationMultiplier(float penetration, float armor)
     {
-        if (penetration <= 0f)
+        if (penetration <= 0f || penetration <= armor)
         {
             return 0f;
         }
 
-        return Mathf.Max(0.08f, 1f - armor / penetration);
+        return 1f - armor / penetration;
+    }
+
+    /// <summary>贴身与废墟会提升穿甲，目前只对步兵生效。</summary>
+    private float EffectivePenetration(Formation attacker, Formation target)
+    {
+        float penetration = attacker.Penetration;
+        if (target != null && attacker.Coord.DistanceTo(target.Coord) <= 1)
+        {
+            penetration *= attacker.CloseRangePenMultiplier;
+        }
+
+        if (_map.IsRuins(attacker.Coord))
+        {
+            penetration *= attacker.RuinsPenMultiplier;
+        }
+
+        return penetration;
     }
 
     private float CurrentDps(Formation formation)
     {
         var target = formation.CurrentTarget;
-        float multiplier = target != null ? PenetrationMultiplier(formation.Penetration, target.Armor) : 1f;
+        float multiplier = target != null
+            ? PenetrationMultiplier(EffectivePenetration(formation, target), target.Armor)
+            : 1f;
         return formation.BaseDps * formation.AttackScale * multiplier;
     }
 
@@ -928,7 +1005,7 @@ public partial class BattleManager : Node3D
         }
     }
 
-    private bool IsVisibleTo(Faction faction, HexCoord coord)
+    internal bool IsVisibleTo(Faction faction, HexCoord coord)
     {
         return (faction == Faction.Player ? _visibleToPlayer : _visibleToEnemy).Contains(coord);
     }
@@ -989,14 +1066,37 @@ public partial class BattleManager : Node3D
             string mitigation = string.Empty;
             if (formation.CurrentTarget != null)
             {
-                float multiplier = PenetrationMultiplier(formation.Penetration, formation.CurrentTarget.Armor);
+                float multiplier = PenetrationMultiplier(
+                    EffectivePenetration(formation, formation.CurrentTarget),
+                    formation.CurrentTarget.Armor);
                 mitigation = $"\n目标装甲: {formation.CurrentTarget.Armor:F0}    穿甲修正: {multiplier * 100f:F0}%";
             }
+
+            float effectivePen = formation.Penetration;
+            string penNotes = string.Empty;
+            if (formation.CurrentTarget != null
+                && formation.Coord.DistanceTo(formation.CurrentTarget.Coord) <= 1
+                && formation.CloseRangePenMultiplier > 1f)
+            {
+                effectivePen *= formation.CloseRangePenMultiplier;
+                penNotes += $"贴身 ×{formation.CloseRangePenMultiplier:0.#}";
+            }
+
+            if (_map.IsRuins(formation.Coord) && formation.RuinsPenMultiplier > 1f)
+            {
+                effectivePen *= formation.RuinsPenMultiplier;
+                penNotes += penNotes.Length > 0
+                    ? $"，废墟 ×{formation.RuinsPenMultiplier:0.#}"
+                    : $"废墟 ×{formation.RuinsPenMultiplier:0.#}";
+            }
+
+            string penLine = penNotes.Length > 0 ? $"\n穿甲加成: 有效 {effectivePen:F0}（{penNotes}）" : string.Empty;
 
             combat =
                 $"存活: {formation.AliveUnits}/{formation.Units}    耐久: {formation.Hp:F0} / {formation.MaxHp:F0}\n" +
                 $"当前输出: {CurrentDps(formation):F1} / 秒{mitigation}\n" +
-                $"护甲: {formation.Armor:F0}    穿甲: {formation.Penetration:F0}    射程: {formation.Range} 格    视野: {formation.VisionRadius} 格\n";
+                $"护甲: {formation.Armor:F0}    穿甲: {formation.Penetration:F0}    射程: {formation.Range} 格    视野: {formation.VisionRadius} 格" +
+                $"{penLine}\n";
         }
         else
         {
@@ -1030,7 +1130,7 @@ public partial class BattleManager : Node3D
         }
     }
 
-    private void ShowMessage(string text)
+    internal void ShowMessage(string text)
     {
         _messageLabel.Text = text;
         _messageTimer = 3.5f;

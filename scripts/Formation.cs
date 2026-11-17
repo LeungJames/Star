@@ -7,6 +7,7 @@ public enum FormationKind
 {
     LightTank,
     HeavyTank,
+    Infantry,
     LightShip,
     SupplyTruck,
 }
@@ -38,6 +39,8 @@ public partial class Formation : Node3D
     public int Range { get; private set; }
     public float BaseDps { get; private set; }
     public int VisionRadius { get; private set; }
+    public float CloseRangePenMultiplier { get; private set; } = 1f;
+    public float RuinsPenMultiplier { get; private set; } = 1f;
 
     public HexCoord Coord { get; set; }
     public readonly List<HexCoord> Path = new();
@@ -48,6 +51,7 @@ public partial class Formation : Node3D
 
     public bool IsAir => Kind == FormationKind.LightShip;
     public bool IsTruck => Kind == FormationKind.SupplyTruck;
+    public bool IsInfantry => Kind == FormationKind.Infantry;
     public bool IsMoving => Path.Count > 0;
     public bool IsCombatant => BaseDps > 0f && Range > 0;
     public bool IsPlayer => Faction == Faction.Player;
@@ -84,6 +88,30 @@ public partial class Formation : Node3D
             Range = 4,
             BaseDps = 26f,
             VisionRadius = 4,
+        };
+    }
+
+    public static Formation CreateInfantry()
+    {
+        return new Formation
+        {
+            Kind = FormationKind.Infantry,
+            Faction = Faction.Player,
+            DisplayName = "步兵编队 · 3 队",
+            Units = 3,
+            Speed = 2.7f,
+            MaxFuel = 100f,
+            Fuel = 80f,
+            FuelDrainPerSecond = 2.2f,
+            MaxHp = 130f,
+            Hp = 130f,
+            Armor = 25f,
+            Penetration = 30f,
+            Range = 2,
+            BaseDps = 24f,
+            VisionRadius = 3,
+            CloseRangePenMultiplier = 5f,
+            RuinsPenMultiplier = 1.5f,
         };
     }
 
@@ -139,9 +167,9 @@ public partial class Formation : Node3D
             DisplayName = "敌方重坦编队 · 3 辆",
             Units = 3,
             Speed = 1.8f,
-            MaxFuel = 100f,
-            Fuel = 100f,
-            FuelDrainPerSecond = 4.5f,
+            MaxFuel = 400f,
+            Fuel = 400f,
+            FuelDrainPerSecond = 2.5f,
             MaxHp = 260f,
             Hp = 260f,
             Armor = 120f,
@@ -161,9 +189,9 @@ public partial class Formation : Node3D
             DisplayName = "敌方轻坦编队 · 3 辆",
             Units = 3,
             Speed = 2.9f,
-            MaxFuel = 100f,
-            Fuel = 100f,
-            FuelDrainPerSecond = 3.2f,
+            MaxFuel = 400f,
+            Fuel = 400f,
+            FuelDrainPerSecond = 2.8f,
             MaxHp = 120f,
             Hp = 120f,
             Armor = 40f,
@@ -210,6 +238,9 @@ public partial class Formation : Node3D
                 break;
             case FormationKind.HeavyTank:
                 BuildTanks(1.28f);
+                break;
+            case FormationKind.Infantry:
+                BuildInfantry();
                 break;
             case FormationKind.LightShip:
                 BuildShips();
@@ -309,6 +340,24 @@ public partial class Formation : Node3D
         {
             AddBox(_body, new Vector3(0.62f, 0.26f, 0.9f) * scale, offset + new Vector3(0f, 0.33f, 0f), hull);
             AddBox(_body, new Vector3(0.34f, 0.18f, 0.36f) * scale, offset + new Vector3(0f, 0.55f, -0.06f), turret);
+        }
+    }
+
+    private void BuildInfantry()
+    {
+        var uniform = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.5f, 0.3f), Roughness = 0.9f };
+        var head = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.58f, 0.45f), Roughness = 0.9f };
+        var offsets = new[]
+        {
+            new Vector3(-0.38f, 0f, 0.25f),
+            new Vector3(0.38f, 0f, 0.25f),
+            new Vector3(0f, 0f, -0.4f),
+        };
+
+        foreach (var offset in offsets)
+        {
+            AddBox(_body, new Vector3(0.26f, 0.52f, 0.26f), offset + new Vector3(0f, 0.46f, 0f), uniform);
+            AddBox(_body, new Vector3(0.18f, 0.18f, 0.18f), offset + new Vector3(0f, 0.81f, 0f), head);
         }
     }
 

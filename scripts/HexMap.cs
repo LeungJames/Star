@@ -14,6 +14,7 @@ public class HexMap
     public int BlockedCount => _blocked.Count;
 
     private readonly HashSet<HexCoord> _blocked = new();
+    private readonly HashSet<HexCoord> _ruins = new();
 
     public HexMap(int radius, ulong seed)
     {
@@ -48,6 +49,17 @@ public class HexMap
     public bool Contains(HexCoord coord) => coord.DistanceTo(Origin) <= Radius;
 
     public bool IsBlocked(HexCoord coord) => _blocked.Contains(coord);
+
+    public bool IsRuins(HexCoord coord) => _ruins.Contains(coord);
+
+    public void AddRuins(HexCoord coord)
+    {
+        if (Contains(coord))
+        {
+            _blocked.Remove(coord);
+            _ruins.Add(coord);
+        }
+    }
 
     public void ClearAround(HexCoord center, int radius)
     {
