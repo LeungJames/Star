@@ -1,0 +1,25 @@
+# 设计文档：本地维护，不纳入版本管理
+docs/
+
+# Python 脚本与缓存
+*.py
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Blender 工程文件与备份
+*.blend
+*.blend1
+*.blend2
+
+# Godot 缓存与导出产物
+.godot/
+/build/
+*.pck
+*.zip
+
+# .NET 构建产物
+bin/
+obj/
+.mono/
