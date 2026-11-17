@@ -3,7 +3,7 @@ using Godot;
 
 namespace Star;
 
-/// <summary>原型主控：生成地图与编队，处理选择、移动指令、占格、燃油与补给。</summary>
+/// <summary>原型主控：地图、编队、选择与移动、占格、燃油补给、持续交战与战争迷雾。</summary>
 public partial class BattleManager : Node3D
 {
     private const int MapRadius = 7;
@@ -13,11 +13,19 @@ public partial class BattleManager : Node3D
     private static readonly HexCoord TankSpawn = new(0, 2);
     private static readonly HexCoord TruckSpawn = new(-3, 3);
     private static readonly HexCoord AirSpawn = new(2, -3);
+    private static readonly HexCoord EnemyHeavySpawn = new(6, 0);
+    private static readonly HexCoord EnemyLightSpawn = new(-5, -2);
 
     private readonly Dictionary<HexCoord, Formation> _ground = new();
     private readonly Dictionary<HexCoord, Formation> _air = new();
     private readonly List<Formation> _formations = new();
     private readonly List<MeshInstance3D> _pathMarkers = new();
+    private readonly Dictionary<Formation, MeshInstance3D> _beams = new();
+    private readonly HashSet<HexCoord> _explored = new();
+    private readonly HashSet<HexCoord> _visibleToPlayer = new();
+    private readonly HashSet<HexCoord> _visibleToEnemy = new();
+    private readonly Dictionary<HexCoord, MeshInstance3D> _fogCells = new();
+    private readonly HashSet<Formation> _revealedEnemies = new();
 
     private HexMap _map;
     private CameraRig _camera;
@@ -27,6 +35,10 @@ public partial class BattleManager : Node3D
     private StandardMaterial3D _cursorBad;
     private CylinderMesh _markerMesh;
     private StandardMaterial3D _markerMaterial;
+    private BoxMesh _beamMesh;
+    private StandardMaterial3D _beamMaterial;
+    private StandardMaterial3D _fogUnexplored;
+    private StandardMaterial3D _fogDim;
     private Formation _markerOwner;
     private Label _infoLabel;
     private Label _messageLabel;
@@ -38,13 +50,17 @@ public partial class BattleManager : Node3D
         _map.ClearAround(TankSpawn, 2);
         _map.ClearAround(TruckSpawn, 2);
         _map.ClearAround(AirSpawn, 2);
+        _map.ClearAround(EnemyHeavySpawn, 1);
+        _map.ClearAround(EnemyLightSpawn, 1);
 
         SetupEnvironment();
         BuildMapVisual();
+        BuildFog();
         SetupCamera();
         SetupCursor();
         SetupHud();
         SpawnFormations();
+        UpdateVisibility();
 
         ShowMessage("左键选中编队，右键下达移动命令");
     }
@@ -54,6 +70,9 @@ public partial class BattleManager : Node3D
         float dt = (float)delta;
         UpdateMovement(dt);
         UpdateRefuel(dt);
+        UpdateVisibility();
+        UpdateCombat(dt);
+        UpdateBeams();
         UpdateCursor();
         UpdateHud();
         UpdateMessage(dt);
@@ -147,6 +166,108 @@ public partial class BattleManager : Node3D
         }
     }
 
+    private void BuildFog()
+    {
+        _fogUnexplored = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.015f, 0.02f, 0.025f, 0.93f),
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+        };
+        _fogDim = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.03f, 0.05f, 0.06f, 0.48f),
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+        };
+        var mesh = new CylinderMesh
+        {
+            TopRadius = HexMap.HexSize * 0.99f,
+            BottomRadius = HexMap.HexSize * 0.99f,
+            Height = 0.02f,
+            RadialSegments = 6,
+        };
+
+        var root = new Node3D { Name = "Fog" };
+        AddChild(root);
+        foreach (var coord in _map.Cells())
+        {
+            bool blocked = _map.IsBlocked(coord);
+            var overlay = new MeshInstance3D
+            {
+                Mesh = mesh,
+                MaterialOverride = _fogUnexplored,
+                Position = _map.ToWorld(coord) + new Vector3(0f, blocked ? 1.12f : 0.215f, 0f),
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            };
+            root.AddChild(overlay);
+            _fogCells[coord] = overlay;
+        }
+    }
+
+    private void UpdateVisibility()
+    {
+        _visibleToPlayer.Clear();
+        _visibleToEnemy.Clear();
+
+        foreach (var formation in _formations)
+        {
+            if (formation.Hp <= 0f)
+            {
+                continue;
+            }
+
+            var visibleSet = formation.IsPlayer ? _visibleToPlayer : _visibleToEnemy;
+            foreach (var cell in _map.Cells())
+            {
+                if (cell.DistanceTo(formation.Coord) <= formation.VisionRadius)
+                {
+                    visibleSet.Add(cell);
+                }
+            }
+        }
+
+        foreach (var cell in _visibleToPlayer)
+        {
+            _explored.Add(cell);
+        }
+
+        foreach (var pair in _fogCells)
+        {
+            var overlay = pair.Value;
+            if (_visibleToPlayer.Contains(pair.Key))
+            {
+                overlay.Visible = false;
+            }
+            else if (_explored.Contains(pair.Key))
+            {
+                overlay.Visible = true;
+                overlay.MaterialOverride = _fogDim;
+            }
+            else
+            {
+                overlay.Visible = true;
+                overlay.MaterialOverride = _fogUnexplored;
+            }
+        }
+
+        foreach (var formation in _formations)
+        {
+            if (formation.IsPlayer)
+            {
+                formation.Visible = true;
+                continue;
+            }
+
+            bool visible = _visibleToPlayer.Contains(formation.Coord);
+            formation.Visible = visible;
+            if (visible && _revealedEnemies.Add(formation))
+            {
+                ShowMessage($"发现 {formation.DisplayName}");
+            }
+        }
+    }
+
     private void SetupCamera()
     {
         _camera = new CameraRig { Current = true };
@@ -177,6 +298,13 @@ public partial class BattleManager : Node3D
         _markerMaterial = new StandardMaterial3D
         {
             AlbedoColor = new Color(1f, 0.86f, 0.32f, 0.85f),
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+        };
+        _beamMesh = new BoxMesh { Size = new Vector3(0.06f, 0.06f, 1f) };
+        _beamMaterial = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(1f, 0.62f, 0.25f, 0.9f),
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
         };
@@ -220,12 +348,14 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("STAR · 实时六角格战斗原型", theme, 20, new Color(0.82f, 0.9f, 0.66f)));
         hintBox.AddChild(MakeLabel("左键：选中编队    右键：移动 / 加油指令", theme));
         hintBox.AddChild(MakeLabel("WASD：平移相机    滚轮缩放    中键拖动平移", theme));
+        hintBox.AddChild(MakeLabel("编队进入射程后自动持续开火", theme, 15, new Color(0.95f, 0.78f, 0.55f)));
+        hintBox.AddChild(MakeLabel("迷雾：未探索区域被遮蔽，敌人进入视野才会现身", theme, 15, new Color(0.62f, 0.78f, 0.95f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
         var infoPanel = MakePanel(theme);
         _infoLabel = MakeLabel(string.Empty, theme);
-        _infoLabel.CustomMinimumSize = new Vector2(340f, 112f);
+        _infoLabel.CustomMinimumSize = new Vector2(340f, 138f);
         infoPanel.AddChild(_infoLabel);
         ui.AddChild(infoPanel);
         infoPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomLeft, Control.LayoutPresetMode.Minsize, 16);
@@ -276,6 +406,8 @@ public partial class BattleManager : Node3D
         SpawnFormation(Formation.CreateLightTank(), TankSpawn);
         SpawnFormation(Formation.CreateSupplyTruck(), TruckSpawn);
         SpawnFormation(Formation.CreateLightShip(), AirSpawn);
+        SpawnFormation(Formation.CreateEnemyHeavyTank(), EnemyHeavySpawn);
+        SpawnFormation(Formation.CreateEnemyLightTank(), EnemyLightSpawn);
     }
 
     private void SpawnFormation(Formation formation, HexCoord coord)
@@ -285,6 +417,16 @@ public partial class BattleManager : Node3D
         AddChild(formation);
         _formations.Add(formation);
         TableOf(formation)[coord] = formation;
+
+        var beam = new MeshInstance3D
+        {
+            Mesh = _beamMesh,
+            MaterialOverride = _beamMaterial,
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            Visible = false,
+        };
+        AddChild(beam);
+        _beams[formation] = beam;
     }
 
     private Dictionary<HexCoord, Formation> TableOf(Formation formation) => formation.IsAir ? _air : _ground;
@@ -295,11 +437,11 @@ public partial class BattleManager : Node3D
         if (picked == null && TryGroundPoint(screenPosition, out var world))
         {
             var coord = _map.ToCoord(world);
-            if (_ground.TryGetValue(coord, out var ground))
+            if (_ground.TryGetValue(coord, out var ground) && ground.IsPlayer)
             {
                 picked = ground;
             }
-            else if (_air.TryGetValue(coord, out var air))
+            else if (_air.TryGetValue(coord, out var air) && air.IsPlayer)
             {
                 picked = air;
             }
@@ -329,7 +471,7 @@ public partial class BattleManager : Node3D
         }
 
         var picked = PickFormation(screenPosition, 46f);
-        if (_selected.IsTruck && picked != null && !picked.IsTruck && !picked.IsAir)
+        if (_selected.IsTruck && picked != null && picked.IsPlayer && !picked.IsTruck && !picked.IsAir)
         {
             OrderRefuel(_selected, picked);
             return;
@@ -621,6 +763,176 @@ public partial class BattleManager : Node3D
         }
     }
 
+    private void UpdateCombat(float dt)
+    {
+        var pendingDamage = new Dictionary<Formation, float>();
+
+        foreach (var attacker in _formations)
+        {
+            attacker.CurrentTarget = null;
+            if (!attacker.IsCombatant || attacker.Hp <= 0f)
+            {
+                continue;
+            }
+
+            var target = FindTarget(attacker);
+            attacker.CurrentTarget = target;
+            if (target == null)
+            {
+                continue;
+            }
+
+            float multiplier = PenetrationMultiplier(attacker.Penetration, target.Armor);
+            float dps = attacker.BaseDps * attacker.AttackScale * multiplier;
+            pendingDamage[target] = pendingDamage.GetValueOrDefault(target) + dps * dt;
+        }
+
+        foreach (var pair in pendingDamage)
+        {
+            var target = pair.Key;
+            if (target.Hp <= 0f)
+            {
+                continue;
+            }
+
+            target.Hp = Mathf.Max(0f, target.Hp - pair.Value);
+            if (target.Hp <= 0f)
+            {
+                DestroyFormation(target);
+            }
+        }
+    }
+
+    private Formation FindTarget(Formation attacker)
+    {
+        Formation best = null;
+        int bestDistance = int.MaxValue;
+        foreach (var candidate in _formations)
+        {
+            if (candidate.Faction == attacker.Faction || candidate.Hp <= 0f)
+            {
+                continue;
+            }
+
+            int distance = attacker.Coord.DistanceTo(candidate.Coord);
+            if (distance > attacker.Range || distance >= bestDistance)
+            {
+                continue;
+            }
+
+            if (!IsVisibleTo(attacker.Faction, candidate.Coord))
+            {
+                continue;
+            }
+
+            best = candidate;
+            bestDistance = distance;
+        }
+
+        return best;
+    }
+
+    /// <summary>穿甲低于装甲时伤害显著衰减，最低保留 8%。</summary>
+    private static float PenetrationMultiplier(float penetration, float armor)
+    {
+        if (penetration <= 0f)
+        {
+            return 0f;
+        }
+
+        return Mathf.Max(0.08f, 1f - armor / penetration);
+    }
+
+    private float CurrentDps(Formation formation)
+    {
+        var target = formation.CurrentTarget;
+        float multiplier = target != null ? PenetrationMultiplier(formation.Penetration, target.Armor) : 1f;
+        return formation.BaseDps * formation.AttackScale * multiplier;
+    }
+
+    private void DestroyFormation(Formation formation)
+    {
+        var table = TableOf(formation);
+        if (table.TryGetValue(formation.Coord, out var owner) && owner == formation)
+        {
+            table.Remove(formation.Coord);
+        }
+
+        ReleaseReservations(formation);
+        formation.Path.Clear();
+        formation.CurrentTarget = null;
+        _formations.Remove(formation);
+
+        if (_markerOwner == formation)
+        {
+            ClearPathMarkers();
+        }
+
+        if (_selected == formation)
+        {
+            SetSelected(null);
+        }
+
+        foreach (var other in _formations)
+        {
+            if (other.RefuelTarget == formation)
+            {
+                other.RefuelTarget = null;
+            }
+
+            if (other.CurrentTarget == formation)
+            {
+                other.CurrentTarget = null;
+            }
+        }
+
+        if (_beams.TryGetValue(formation, out var beam))
+        {
+            beam.QueueFree();
+            _beams.Remove(formation);
+        }
+
+        formation.QueueFree();
+        ShowMessage($"{formation.DisplayName} 已覆灭");
+    }
+
+    private void UpdateBeams()
+    {
+        foreach (var pair in _beams)
+        {
+            var attacker = pair.Key;
+            var beam = pair.Value;
+            var target = attacker.CurrentTarget;
+            if (target == null || attacker.Hp <= 0f || target.Hp <= 0f
+                || !IsVisibleTo(Faction.Player, attacker.Coord)
+                || !IsVisibleTo(Faction.Player, target.Coord))
+            {
+                beam.Visible = false;
+                continue;
+            }
+
+            Vector3 from = attacker.GlobalPosition + new Vector3(0f, attacker.BeamHeight, 0f);
+            Vector3 to = target.GlobalPosition + new Vector3(0f, target.BeamHeight, 0f);
+            Vector3 delta = to - from;
+            float length = delta.Length();
+            if (length < 0.01f)
+            {
+                beam.Visible = false;
+                continue;
+            }
+
+            beam.Visible = true;
+            beam.Position = from + delta * 0.5f;
+            beam.LookAt(to, Vector3.Up);
+            beam.Scale = new Vector3(1f, 1f, length);
+        }
+    }
+
+    private bool IsVisibleTo(Faction faction, HexCoord coord)
+    {
+        return (faction == Faction.Player ? _visibleToPlayer : _visibleToEnemy).Contains(coord);
+    }
+
     private void UpdateCursor()
     {
         if (_selected == null || !TryGroundPoint(GetViewport().GetMousePosition(), out var world))
@@ -640,7 +952,8 @@ public partial class BattleManager : Node3D
         _cursor.Position = _map.ToWorld(coord) + new Vector3(0f, 0.3f, 0f);
 
         bool ok = CanEnter(_selected, coord);
-        if (!ok && _selected.IsTruck && _ground.TryGetValue(coord, out var ground) && ground != _selected && !ground.IsTruck)
+        if (!ok && _selected.IsTruck && _ground.TryGetValue(coord, out var ground)
+            && ground != _selected && ground.IsPlayer && !ground.IsTruck)
         {
             ok = true;
         }
@@ -670,12 +983,37 @@ public partial class BattleManager : Node3D
         }
 
         string fuelState = formation.Fuel <= 0f ? "（耗尽）" : string.Empty;
+        string combat;
+        if (formation.IsCombatant)
+        {
+            string mitigation = string.Empty;
+            if (formation.CurrentTarget != null)
+            {
+                float multiplier = PenetrationMultiplier(formation.Penetration, formation.CurrentTarget.Armor);
+                mitigation = $"\n目标装甲: {formation.CurrentTarget.Armor:F0}    穿甲修正: {multiplier * 100f:F0}%";
+            }
+
+            combat =
+                $"存活: {formation.AliveUnits}/{formation.Units}    耐久: {formation.Hp:F0} / {formation.MaxHp:F0}\n" +
+                $"当前输出: {CurrentDps(formation):F1} / 秒{mitigation}\n" +
+                $"护甲: {formation.Armor:F0}    穿甲: {formation.Penetration:F0}    射程: {formation.Range} 格    视野: {formation.VisionRadius} 格\n";
+        }
+        else
+        {
+            combat = $"耐久: {formation.Hp:F0} / {formation.MaxHp:F0}    视野: {formation.VisionRadius} 格\n";
+        }
+
         string restriction = formation.IsAir
             ? "空中编队：忽略地面阻挡与地面编队占格"
             : "地面编队：受地形与编队占格限制";
+        string status = formation.CurrentTarget != null
+            ? $"交战中 → {formation.CurrentTarget.DisplayName}"
+            : formation.IsMoving
+                ? "移动中"
+                : "待命";
         _infoLabel.Text =
             $"{formation.DisplayName}\n燃油: {formation.Fuel:F0} / {formation.MaxFuel:F0}{fuelState}\n" +
-            $"状态: {(formation.IsMoving ? "移动中" : "待命")}\n{restriction}";
+            $"{combat}状态: {status}\n{restriction}";
     }
 
     private void UpdateMessage(float dt)
@@ -729,6 +1067,11 @@ public partial class BattleManager : Node3D
         float bestDistance = maxPixels;
         foreach (var formation in _formations)
         {
+            if (!formation.IsPlayer)
+            {
+                continue;
+            }
+
             var anchor = formation.GlobalPosition + new Vector3(0f, formation.IsAir ? 3.2f : 0.5f, 0f);
             float distance = _camera.UnprojectPosition(anchor).DistanceTo(screenPosition);
             if (distance < bestDistance)
