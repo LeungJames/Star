@@ -43,8 +43,13 @@ public partial class BattleManager : Node3D
     private Formation _markerOwner;
     private Label _infoLabel;
     private Label _messageLabel;
+    private Label _dayLabel;
+    private Label _stormStateLabel;
+    private Label _stormCycleLabel;
     private float _messageTimer;
     private EnemyCommander _enemyCommander;
+
+    internal WorldClock Clock { get; private set; }
 
     public override void _Ready()
     {
@@ -63,6 +68,19 @@ public partial class BattleManager : Node3D
         SetupCamera();
         SetupCursor();
         SetupHud();
+        Clock = new WorldClock();
+        Clock.SandstormWarning += () => ShowMessage("沙暴预警：强风正在逼近，注意收缩阵型");
+        Clock.SandstormStarted += () =>
+        {
+            ShowMessage("沙暴来临！视野下降，油耗上升，移动变慢");
+            OnSandstormBuildingDamage(true);
+        };
+        Clock.SandstormEnded += () =>
+        {
+            ShowMessage("沙暴结束，视野与行动恢复正常");
+            OnSandstormBuildingDamage(false);
+        };
+
         SpawnFormations();
         UpdateVisibility();
         _enemyCommander = new EnemyCommander(this);
@@ -73,6 +91,7 @@ public partial class BattleManager : Node3D
     public override void _Process(double delta)
     {
         float dt = (float)delta;
+        Clock.Update(dt);
         _enemyCommander.Update(dt);
         UpdateMovement(dt);
         UpdateRefuel(dt);
@@ -81,6 +100,7 @@ public partial class BattleManager : Node3D
         UpdateBeams();
         UpdateCursor();
         UpdateHud();
+        UpdateClockHud();
         UpdateMessage(dt);
     }
 
@@ -230,10 +250,23 @@ public partial class BattleManager : Node3D
         }
     }
 
+    internal int EffectiveVision(Formation formation)
+    {
+        int penalty = Clock != null && Clock.IsStorm ? WorldClock.StormVisionPenalty : 0;
+        return Mathf.Max(1, formation.VisionRadius - penalty);
+    }
+
+    private float WeatherSpeedMultiplier => Clock.IsStorm ? WorldClock.StormSpeedMultiplier : 1f;
+
+    private float WeatherFuelMultiplier => Clock.IsStorm ? WorldClock.StormFuelMultiplier : 1f;
+
     private void UpdateVisibility()
     {
         _visibleToPlayer.Clear();
         _visibleToEnemy.Clear();
+        _fogDim.AlbedoColor = Clock.IsStorm
+            ? new Color(0.02f, 0.035f, 0.045f, 0.72f)
+            : new Color(0.03f, 0.05f, 0.06f, 0.48f);
 
         foreach (var formation in _formations)
         {
@@ -243,9 +276,10 @@ public partial class BattleManager : Node3D
             }
 
             var visibleSet = formation.IsPlayer ? _visibleToPlayer : _visibleToEnemy;
+            int vision = EffectiveVision(formation);
             foreach (var cell in _map.Cells())
             {
-                if (cell.DistanceTo(formation.Coord) <= formation.VisionRadius)
+                if (cell.DistanceTo(formation.Coord) <= vision)
                 {
                     visibleSet.Add(cell);
                 }
@@ -375,12 +409,13 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("WASD：平移相机    滚轮缩放    中键拖动平移", theme));
         hintBox.AddChild(MakeLabel("编队进入射程后自动持续开火", theme, 15, new Color(0.95f, 0.78f, 0.55f)));
         hintBox.AddChild(MakeLabel("迷雾：未探索区域被遮蔽，敌人进入视野才会现身", theme, 15, new Color(0.62f, 0.78f, 0.95f)));
+        hintBox.AddChild(MakeLabel("沙暴季：视野下降、油耗上升、移动变慢", theme, 15, new Color(0.95f, 0.7f, 0.45f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
         var infoPanel = MakePanel(theme);
         _infoLabel = MakeLabel(string.Empty, theme);
-        _infoLabel.CustomMinimumSize = new Vector2(360f, 162f);
+        _infoLabel.CustomMinimumSize = new Vector2(360f, 182f);
         infoPanel.AddChild(_infoLabel);
         ui.AddChild(infoPanel);
         infoPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomLeft, Control.LayoutPresetMode.Minsize, 16);
@@ -394,6 +429,23 @@ public partial class BattleManager : Node3D
         _messageLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomWide, Control.LayoutPresetMode.Minsize, 16);
         _messageLabel.OffsetTop -= 96f;
         _messageLabel.OffsetBottom -= 96f;
+
+        var clockPanel = MakePanel(theme);
+        var clockBox = new VBoxContainer();
+        clockBox.AddThemeConstantOverride("separation", 2);
+        clockPanel.AddChild(clockBox);
+        _dayLabel = MakeLabel("第 1 日", theme, 20, new Color(0.85f, 0.92f, 0.78f));
+        _dayLabel.CustomMinimumSize = new Vector2(210f, 0f);
+        _stormStateLabel = MakeLabel("距沙暴 00:20", theme, 16, new Color(0.7f, 0.85f, 1f));
+        _stormStateLabel.CustomMinimumSize = new Vector2(210f, 0f);
+        _stormCycleLabel = MakeLabel("沙暴轮次 0    间隔 25 秒", theme, 13, new Color(0.62f, 0.66f, 0.6f));
+        _stormCycleLabel.CustomMinimumSize = new Vector2(210f, 0f);
+        clockBox.AddChild(_dayLabel);
+        clockBox.AddChild(_stormStateLabel);
+        clockBox.AddChild(_stormCycleLabel);
+        ui.AddChild(clockPanel);
+        clockPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight, Control.LayoutPresetMode.Minsize, 16);
+        clockPanel.GrowHorizontal = Control.GrowDirection.Begin;
     }
 
     private static PanelContainer MakePanel(Theme theme)
@@ -698,7 +750,7 @@ public partial class BattleManager : Node3D
                 continue;
             }
 
-            float remaining = formation.Speed * dt;
+            float remaining = formation.Speed * WeatherSpeedMultiplier * dt;
             float moved = 0f;
 
             while (remaining > 0f && formation.Path.Count > 0)
@@ -729,7 +781,9 @@ public partial class BattleManager : Node3D
 
             if (moved > 0.0001f)
             {
-                formation.Fuel = Mathf.Max(0f, formation.Fuel - formation.FuelDrainPerSecond * dt);
+                formation.Fuel = Mathf.Max(
+                    0f,
+                    formation.Fuel - formation.FuelDrainPerSecond * WeatherFuelMultiplier * dt);
                 if (formation.Fuel <= 0f && formation.Path.Count > 0)
                 {
                     StopForNoFuel(formation);
@@ -1047,6 +1101,7 @@ public partial class BattleManager : Node3D
         }
 
         var formation = _selected;
+        string stormLine = Clock.IsStorm ? "\n沙暴影响：视野 -2 格，移速 ×0.6，油耗 ×1.8" : string.Empty;
         if (formation.IsTruck)
         {
             string task = formation.RefuelTarget == null
@@ -1055,7 +1110,7 @@ public partial class BattleManager : Node3D
                     ? $"前往 {formation.RefuelTarget.DisplayName}"
                     : $"为 {formation.RefuelTarget.DisplayName} 加油中";
             _infoLabel.Text =
-                $"补给车\n载油: {formation.Cargo:F0} / {formation.MaxCargo:F0}\n状态: {task}\n选中补给车后右键友军地面编队可前往加油";
+                $"补给车\n载油: {formation.Cargo:F0} / {formation.MaxCargo:F0}\n状态: {task}{stormLine}\n选中补给车后右键友军地面编队可前往加油";
             return;
         }
 
@@ -1095,12 +1150,12 @@ public partial class BattleManager : Node3D
             combat =
                 $"存活: {formation.AliveUnits}/{formation.Units}    耐久: {formation.Hp:F0} / {formation.MaxHp:F0}\n" +
                 $"当前输出: {CurrentDps(formation):F1} / 秒{mitigation}\n" +
-                $"护甲: {formation.Armor:F0}    穿甲: {formation.Penetration:F0}    射程: {formation.Range} 格    视野: {formation.VisionRadius} 格" +
+                $"护甲: {formation.Armor:F0}    穿甲: {formation.Penetration:F0}    射程: {formation.Range} 格    视野: {EffectiveVision(formation)} 格" +
                 $"{penLine}\n";
         }
         else
         {
-            combat = $"耐久: {formation.Hp:F0} / {formation.MaxHp:F0}    视野: {formation.VisionRadius} 格\n";
+            combat = $"耐久: {formation.Hp:F0} / {formation.MaxHp:F0}    视野: {EffectiveVision(formation)} 格\n";
         }
 
         string restriction = formation.IsAir
@@ -1113,7 +1168,34 @@ public partial class BattleManager : Node3D
                 : "待命";
         _infoLabel.Text =
             $"{formation.DisplayName}\n燃油: {formation.Fuel:F0} / {formation.MaxFuel:F0}{fuelState}\n" +
-            $"{combat}状态: {status}\n{restriction}";
+            $"{combat}状态: {status}\n{restriction}{stormLine}";
+    }
+
+    private void UpdateClockHud()
+    {
+        _dayLabel.Text = $"第 {Clock.Day} 日";
+        if (Clock.IsStorm)
+        {
+            _stormStateLabel.Text = $"沙暴中 · 剩余 {WorldClock.FormatSeconds(Clock.StormRemaining)}";
+            _stormStateLabel.AddThemeColorOverride("font_color", new Color(1f, 0.55f, 0.28f));
+        }
+        else if (Clock.IsWarning)
+        {
+            _stormStateLabel.Text = $"沙暴预警 · {WorldClock.FormatSeconds(Clock.TimeToNextStorm)}";
+            _stormStateLabel.AddThemeColorOverride("font_color", new Color(1f, 0.85f, 0.35f));
+        }
+        else
+        {
+            _stormStateLabel.Text = $"距沙暴 {WorldClock.FormatSeconds(Clock.TimeToNextStorm)}";
+            _stormStateLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.85f, 1f));
+        }
+
+        _stormCycleLabel.Text = $"沙暴轮次 {Clock.StormCount}    间隔 {Clock.GapSeconds:F0} 秒";
+    }
+
+    /// <summary>建筑系统接入点：建筑未实现，预留沙暴受损结算。</summary>
+    private void OnSandstormBuildingDamage(bool active)
+    {
     }
 
     private void UpdateMessage(float dt)

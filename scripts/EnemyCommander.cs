@@ -13,6 +13,7 @@ public class EnemyCommander
         Probing,
         Attacking,
         Retreating,
+        Sheltering,
     }
 
     private readonly BattleManager _battle;
@@ -37,6 +38,23 @@ public class EnemyCommander
         if (enemies.Count == 0)
         {
             return;
+        }
+
+        if (_battle.Clock.IsStorm)
+        {
+            if (_state != State.Sheltering)
+            {
+                ChangeState(State.Sheltering);
+            }
+
+            UpdateSheltering(enemies);
+            return;
+        }
+
+        if (_state == State.Sheltering)
+        {
+            _battle.ShowMessage("沙暴结束，敌方重新展开");
+            ChangeState(State.Scouting);
         }
 
         var scout = enemies.FirstOrDefault(f => f.Kind == FormationKind.LightTank);
@@ -157,8 +175,32 @@ public class EnemyCommander
         }
     }
 
-    private void UpdateRetreating(Formation scout)
+    private void UpdateSheltering(List<Formation> enemies)
     {
+        if (_moveCooldown > 0f)
+        {
+            return;
+        }
+
+        foreach (var enemy in enemies)
+        {
+            if (enemy.IsMoving)
+            {
+                continue;
+            }
+
+            var home = enemy.Kind == FormationKind.HeavyTank
+                ? new HexCoord(6, 0)
+                : new HexCoord(-5, -2);
+            if (TryMoveNear(enemy, home, 0, 1))
+            {
+                _moveCooldown = 2f;
+                break;
+            }
+        }
+    }
+
+    private void UpdateRetreating(Formation scout)    {
         if (scout == null)
         {
             ChangeState(State.Attacking);
