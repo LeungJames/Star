@@ -7,6 +7,9 @@ public enum BuildingKind
     CoreTower,
     PowerPlant,
     ProductionLine,
+    Barracks,
+    TankFactory,
+    Hangar,
     Habitat,
     Storage,
     OutpostStorage,
@@ -33,6 +36,8 @@ public partial class Building : Node3D
     public bool UnderSandstorm { get; set; }
     public bool IsAlive => Hp > 0f;
     public bool IsPlayer => Faction == Faction.Player;
+    public bool IsProduction => Kind is BuildingKind.Barracks or BuildingKind.TankFactory
+        or BuildingKind.Hangar or BuildingKind.ProductionLine;
 
     public float Efficiency
     {
@@ -64,6 +69,9 @@ public partial class Building : Node3D
                 BuildingKind.CoreTower => "核心塔",
                 BuildingKind.PowerPlant => "发电站",
                 BuildingKind.ProductionLine => "产线",
+                BuildingKind.Barracks => "兵营",
+                BuildingKind.TankFactory => "坦克厂",
+                BuildingKind.Hangar => "机库",
                 BuildingKind.Habitat => "居住舱",
                 BuildingKind.Storage => "仓储",
                 _ => "前哨仓储",
@@ -73,6 +81,9 @@ public partial class Building : Node3D
                 BuildingKind.CoreTower => 600f,
                 BuildingKind.PowerPlant => 240f,
                 BuildingKind.ProductionLine => 260f,
+                BuildingKind.Barracks => 240f,
+                BuildingKind.TankFactory => 280f,
+                BuildingKind.Hangar => 260f,
                 BuildingKind.Habitat => 200f,
                 BuildingKind.Storage => 220f,
                 _ => 180f,
@@ -83,6 +94,9 @@ public partial class Building : Node3D
             {
                 BuildingKind.CoreTower => 8,
                 BuildingKind.ProductionLine => 24,
+                BuildingKind.Barracks => 6,
+                BuildingKind.TankFactory => 6,
+                BuildingKind.Hangar => 6,
                 BuildingKind.Habitat => 10,
                 BuildingKind.Storage => 4,
                 BuildingKind.OutpostStorage => 2,
@@ -93,6 +107,9 @@ public partial class Building : Node3D
                 BuildingKind.CoreTower => 0,
                 BuildingKind.PowerPlant => 0,
                 BuildingKind.ProductionLine => 2,
+                BuildingKind.Barracks => 2,
+                BuildingKind.TankFactory => 2,
+                BuildingKind.Hangar => 2,
                 BuildingKind.Habitat => 3,
                 BuildingKind.Storage => 4,
                 _ => 5,
@@ -101,6 +118,9 @@ public partial class Building : Node3D
             {
                 BuildingKind.PowerPlant => 4,
                 BuildingKind.ProductionLine => 6,
+                BuildingKind.Barracks => 2,
+                BuildingKind.TankFactory => 2,
+                BuildingKind.Hangar => 2,
                 BuildingKind.Storage => 3,
                 BuildingKind.OutpostStorage => 3,
                 _ => 0,
@@ -185,6 +205,23 @@ public partial class Building : Node3D
                 AddBox(_body, new Vector3(1.1f, 0.5f, 0.55f), new Vector3(0f, 0.9f, -0.35f), wall);
                 AddBox(_body, new Vector3(0.5f, 0.3f, 0.35f), new Vector3(0.35f, 0.75f, 0.45f), wall);
                 AddBox(_body, new Vector3(0.5f, 0.3f, 0.35f), new Vector3(-0.35f, 0.75f, 0.45f), wall);
+                break;
+            case BuildingKind.Barracks:
+                AddBox(_body, new Vector3(1.5f, 0.5f, 1.35f), new Vector3(0f, 0.45f, 0f), trim);
+                AddBox(_body, new Vector3(1.2f, 0.55f, 0.9f), new Vector3(0f, 0.95f, -0.1f), wall);
+                AddBox(_body, new Vector3(0.42f, 0.5f, 0.08f), new Vector3(0f, 0.6f, 0.72f), glow);
+                break;
+            case BuildingKind.TankFactory:
+                AddBox(_body, new Vector3(1.6f, 0.45f, 1.6f), new Vector3(0f, 0.42f, 0f), trim);
+                AddBox(_body, new Vector3(1.25f, 0.7f, 1.25f), new Vector3(0f, 1f, 0f), wall);
+                AddCylinder(_body, 0.18f, 0.18f, 0.9f, new Vector3(0.55f, 1.75f, -0.4f), solar, 8);
+                AddBox(_body, new Vector3(0.6f, 0.16f, 0.6f), new Vector3(-0.35f, 1.45f, 0.35f), glow);
+                break;
+            case BuildingKind.Hangar:
+                AddBox(_body, new Vector3(1.7f, 0.35f, 1.55f), new Vector3(0f, 0.38f, 0f), trim);
+                AddCylinder(_body, 0.85f, 0.85f, 0.9f, new Vector3(0f, 0.9f, 0f), wall, 12);
+                AddBox(_body, new Vector3(0.9f, 0.12f, 0.7f), new Vector3(0f, 1.38f, 0f), solar);
+                AddBox(_body, new Vector3(0.5f, 0.12f, 0.1f), new Vector3(0f, 0.55f, 0.8f), glow);
                 break;
             case BuildingKind.Habitat:
                 AddCylinder(_body, 0.85f, 0.85f, 0.55f, new Vector3(0f, 0.48f, 0f), trim, 12);

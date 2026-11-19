@@ -6,9 +6,11 @@ namespace Star;
 public enum FormationKind
 {
     LightTank,
+    MediumTank,
     HeavyTank,
     Infantry,
     LightShip,
+    MediumShip,
     SupplyTruck,
     RepairTruck,
 }
@@ -50,15 +52,26 @@ public partial class Formation : Node3D
     public Formation CurrentTarget { get; set; }
     public Building CurrentBuildingTarget { get; set; }
     public Building RepairTargetBuilding { get; set; }
+    public Captain Captain { get; set; }
+    public bool Replenishing { get; set; }
+    public Formation ReplenishTruck { get; set; }
+    public int LastAliveUnits { get; set; }
     public MeshInstance3D Highlight { get; private set; }
 
-    public bool IsAir => Kind == FormationKind.LightShip;
+    public bool IsAir => Kind is FormationKind.LightShip or FormationKind.MediumShip;
     public bool IsTruck => Kind == FormationKind.SupplyTruck;
     public bool IsInfantry => Kind == FormationKind.Infantry;
     public bool IsRepairTruck => Kind == FormationKind.RepairTruck;
+    public bool IsTank => Kind is FormationKind.LightTank or FormationKind.MediumTank or FormationKind.HeavyTank;
+    public bool IsShip => Kind is FormationKind.LightShip or FormationKind.MediumShip;
+    public bool IsCombatFormation => IsTank || IsShip || IsInfantry;
+    public bool CanReplenish => (IsTank || IsShip) && Hp < MaxHp;
     public bool IsMoving => Path.Count > 0;
     public bool IsCombatant => BaseDps > 0f && Range > 0;
     public bool IsPlayer => Faction == Faction.Player;
+
+    public float CaptainDamageMultiplier =>
+        Captain == null ? 1f : Captain.Matches(Kind) ? 1.15f : 1.075f;
 
     /// <summary>按耐久比例折算的存活单位数，至少保留 1 个。</summary>
     public int AliveUnits => Hp <= 0f ? 0 : Mathf.Max(1, Mathf.CeilToInt(Units * Hp / MaxHp));
@@ -73,42 +86,68 @@ public partial class Formation : Node3D
     private MeshInstance3D _healthFill;
     private float _hoverTime;
 
-    public static Formation CreateLightTank()
+    public static Formation CreateLightTank(int units = 3, Captain captain = null)
     {
         return new Formation
         {
             Kind = FormationKind.LightTank,
             Faction = Faction.Player,
-            DisplayName = "轻坦编队 · 3 辆",
-            Units = 3,
+            DisplayName = $"轻坦编队 · {units} 辆",
+            Units = units,
             Speed = 3.1f,
             MaxFuel = 100f,
-            Fuel = 45f,
+            Fuel = 100f,
             FuelDrainPerSecond = 3.2f,
-            MaxHp = 120f,
-            Hp = 120f,
+            MaxHp = 40f * units,
+            Hp = 40f * units,
             Armor = 45f,
             Penetration = 55f,
             Range = 4,
             BaseDps = 26f,
             VisionRadius = 4,
+            Captain = captain,
+            LastAliveUnits = units,
         };
     }
 
-    public static Formation CreateInfantry()
+    public static Formation CreateMediumTank(int units = 3, Captain captain = null)
+    {
+        return new Formation
+        {
+            Kind = FormationKind.MediumTank,
+            Faction = Faction.Player,
+            DisplayName = $"中坦编队 · {units} 辆",
+            Units = units,
+            Speed = 2.6f,
+            MaxFuel = 110f,
+            Fuel = 110f,
+            FuelDrainPerSecond = 3.6f,
+            MaxHp = 60f * units,
+            Hp = 60f * units,
+            Armor = 75f,
+            Penetration = 70f,
+            Range = 4,
+            BaseDps = 30f,
+            VisionRadius = 4,
+            Captain = captain,
+            LastAliveUnits = units,
+        };
+    }
+
+    public static Formation CreateInfantry(int units = 3, Captain captain = null)
     {
         return new Formation
         {
             Kind = FormationKind.Infantry,
             Faction = Faction.Player,
-            DisplayName = "步兵编队 · 3 队",
-            Units = 3,
+            DisplayName = $"步兵编队 · {units} 队",
+            Units = units,
             Speed = 2.7f,
             MaxFuel = 100f,
-            Fuel = 80f,
+            Fuel = 100f,
             FuelDrainPerSecond = 2.2f,
-            MaxHp = 130f,
-            Hp = 130f,
+            MaxHp = 44f * units,
+            Hp = 44f * units,
             Armor = 25f,
             Penetration = 30f,
             Range = 2,
@@ -116,28 +155,56 @@ public partial class Formation : Node3D
             VisionRadius = 3,
             CloseRangePenMultiplier = 5f,
             RuinsPenMultiplier = 1.5f,
+            Captain = captain,
+            LastAliveUnits = units,
         };
     }
 
-    public static Formation CreateLightShip()
+    public static Formation CreateLightShip(int units = 3, Captain captain = null)
     {
         return new Formation
         {
             Kind = FormationKind.LightShip,
             Faction = Faction.Player,
-            DisplayName = "轻型飞船编队 · 3 艘",
-            Units = 3,
+            DisplayName = $"轻型飞船编队 · {units} 艘",
+            Units = units,
             Speed = 5.4f,
             MaxFuel = 100f,
-            Fuel = 70f,
+            Fuel = 100f,
             FuelDrainPerSecond = 2.4f,
-            MaxHp = 90f,
-            Hp = 90f,
+            MaxHp = 30f * units,
+            Hp = 30f * units,
             Armor = 30f,
             Penetration = 70f,
             Range = 5,
             BaseDps = 34f,
             VisionRadius = 6,
+            Captain = captain,
+            LastAliveUnits = units,
+        };
+    }
+
+    public static Formation CreateMediumShip(int units = 3, Captain captain = null)
+    {
+        return new Formation
+        {
+            Kind = FormationKind.MediumShip,
+            Faction = Faction.Player,
+            DisplayName = $"中型飞船编队 · {units} 艘",
+            Units = units,
+            Speed = 4.6f,
+            MaxFuel = 110f,
+            Fuel = 110f,
+            FuelDrainPerSecond = 3f,
+            MaxHp = 44f * units,
+            Hp = 44f * units,
+            Armor = 50f,
+            Penetration = 85f,
+            Range = 5,
+            BaseDps = 44f,
+            VisionRadius = 6,
+            Captain = captain,
+            LastAliveUnits = units,
         };
     }
 
@@ -178,6 +245,30 @@ public partial class Formation : Node3D
             Hp = 90f,
             Armor = 20f,
             VisionRadius = 3,
+        };
+    }
+
+    public static Formation CreateHeavyTank(int units = 3, Captain captain = null)
+    {
+        return new Formation
+        {
+            Kind = FormationKind.HeavyTank,
+            Faction = Faction.Player,
+            DisplayName = $"重坦编队 · {units} 辆",
+            Units = units,
+            Speed = 1.8f,
+            MaxFuel = 120f,
+            Fuel = 120f,
+            FuelDrainPerSecond = 4.4f,
+            MaxHp = 86f * units,
+            Hp = 86f * units,
+            Armor = 120f,
+            Penetration = 90f,
+            Range = 4,
+            BaseDps = 26f,
+            VisionRadius = 4,
+            Captain = captain,
+            LastAliveUnits = units,
         };
     }
 
@@ -259,6 +350,9 @@ public partial class Formation : Node3D
             case FormationKind.LightTank:
                 BuildTanks(1f);
                 break;
+            case FormationKind.MediumTank:
+                BuildTanks(1.12f);
+                break;
             case FormationKind.HeavyTank:
                 BuildTanks(1.28f);
                 break;
@@ -267,6 +361,9 @@ public partial class Formation : Node3D
                 break;
             case FormationKind.LightShip:
                 BuildShips();
+                break;
+            case FormationKind.MediumShip:
+                BuildShips(1.15f);
                 break;
             case FormationKind.SupplyTruck:
                 BuildTruck();
@@ -387,7 +484,7 @@ public partial class Formation : Node3D
         }
     }
 
-    private void BuildShips()
+    private void BuildShips(float scale = 1f)
     {
         var hull = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.64f, 0.7f), Metallic = 0.5f, Roughness = 0.4f };
         var canopy = new StandardMaterial3D { AlbedoColor = new Color(0.25f, 0.55f, 0.65f), Roughness = 0.2f };
@@ -405,12 +502,14 @@ public partial class Formation : Node3D
             new Vector3(0.5f, 0f, 0.3f),
             new Vector3(0f, 0f, -0.55f),
         };
+        float height = 3.2f * scale;
 
         foreach (var offset in offsets)
         {
-            AddBox(_body, new Vector3(0.55f, 0.16f, 1.05f), offset + new Vector3(0f, 3.2f, 0f), hull);
-            AddBox(_body, new Vector3(0.3f, 0.18f, 0.34f), offset + new Vector3(0f, 3.32f, -0.2f), canopy);
-            AddBox(_body, new Vector3(0.22f, 0.08f, 0.14f), offset + new Vector3(0f, 3.2f, 0.58f), engine);
+            var at = offset * scale;
+            AddBox(_body, new Vector3(0.55f, 0.16f, 1.05f) * scale, at + new Vector3(0f, height, 0f), hull);
+            AddBox(_body, new Vector3(0.3f, 0.18f, 0.34f) * scale, at + new Vector3(0f, height + 0.12f * scale, -0.2f * scale), canopy);
+            AddBox(_body, new Vector3(0.22f, 0.08f, 0.14f) * scale, at + new Vector3(0f, height, 0.58f * scale), engine);
         }
     }
 

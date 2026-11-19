@@ -46,6 +46,7 @@ public partial class BattleManager : Node3D
     private StandardMaterial3D _ruinMaterial;
     private BuildingManager _buildings;
     private ResourceManager _resources;
+    private ProductionManager _production;
     private Building _selectedBuilding;
     private bool _gameOver;
     private Formation _markerOwner;
@@ -58,6 +59,16 @@ public partial class BattleManager : Node3D
     private Label _defeatLabel;
     private float _messageTimer;
     private EnemyCommander _enemyCommander;
+    private PanelContainer _productionPanel;
+    private Label _productionTitle;
+    private Label _productionStatus;
+    private readonly Button[] _modelButtons = new Button[3];
+    private readonly Button[] _sizeButtons = new Button[4];
+    private readonly Button[] _captainButtons = new Button[4];
+    private Building _uiBuilding;
+    private FormationKind _orderKind;
+    private int _orderUnits = 3;
+    private int _orderCaptain;
 
     internal WorldClock Clock { get; private set; }
 
@@ -96,6 +107,7 @@ public partial class BattleManager : Node3D
 
         SpawnFormations();
         _resources = new ResourceManager(this, _buildings);
+        _production = new ProductionManager(this, _buildings, _resources);
         UpdateVisibility();
         _enemyCommander = new EnemyCommander(this);
 
@@ -116,8 +128,11 @@ public partial class BattleManager : Node3D
         UpdateRefuel(dt);
         _buildings.Update(dt);
         _resources.Update(dt);
+        _production.Update(dt);
+        UpdateReplenish(dt);
         UpdateVisibility();
         UpdateCombat(dt);
+        RegisterInfantryLosses();
         UpdateBeams();
         UpdateCursor();
         UpdateHud();
@@ -128,6 +143,12 @@ public partial class BattleManager : Node3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
+        if (@event is InputEventKey key && key.Pressed && !key.Echo && key.Keycode == Key.R)
+        {
+            TryStartReplenish(_selected);
+            return;
+        }
+
         if (@event is not InputEventMouseButton button || !button.Pressed)
         {
             return;
@@ -454,6 +475,7 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("沙暴季：视野下降、油耗上升、移动变慢", theme, 15, new Color(0.95f, 0.7f, 0.45f)));
         hintBox.AddChild(MakeLabel("建筑：维修车贴住受损建筑即可就地维修", theme, 15, new Color(0.72f, 0.9f, 0.7f)));
         hintBox.AddChild(MakeLabel("资源：除燃料外自动回仓；仓储满则浪费，被摧毁会掉落库存", theme, 15, new Color(0.85f, 0.82f, 0.6f)));
+        hintBox.AddChild(MakeLabel("生产：选中兵营 / 坦克厂 / 机库下单；按 R 补员", theme, 15, new Color(0.78f, 0.8f, 0.95f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
@@ -508,6 +530,207 @@ public partial class BattleManager : Node3D
         _defeatLabel.Visible = false;
         ui.AddChild(_defeatLabel);
         _defeatLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        BuildProductionPanel(ui, theme);
+    }
+
+    private void BuildProductionPanel(Control ui, Theme theme)
+    {
+        _productionPanel = MakePanel(theme);
+        var box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", 4);
+        _productionPanel.AddChild(box);
+
+        _productionTitle = MakeLabel("生产", theme, 16, new Color(0.85f, 0.92f, 0.78f));
+        box.AddChild(_productionTitle);
+
+        box.AddChild(MakeLabel("型号", theme, 13, new Color(0.7f, 0.72f, 0.66f)));
+        var modelRow = new HBoxContainer();
+        modelRow.AddThemeConstantOverride("separation", 4);
+        box.AddChild(modelRow);
+        var modelGroup = new ButtonGroup();
+        for (int i = 0; i < _modelButtons.Length; i++)
+        {
+            var button = MakeToggleButton("—", theme);
+            button.ButtonGroup = modelGroup;
+            int index = i;
+            button.Pressed += () => OnModelSelected(index);
+            _modelButtons[i] = button;
+            modelRow.AddChild(button);
+        }
+
+        box.AddChild(MakeLabel("人数", theme, 13, new Color(0.7f, 0.72f, 0.66f)));
+        var sizeRow = new HBoxContainer();
+        sizeRow.AddThemeConstantOverride("separation", 4);
+        box.AddChild(sizeRow);
+        var sizeGroup = new ButtonGroup();
+        for (int i = 0; i < _sizeButtons.Length; i++)
+        {
+            int units = i + 3;
+            var button = MakeToggleButton($"{units}", theme);
+            button.ButtonGroup = sizeGroup;
+            button.Pressed += () => { _orderUnits = units; RefreshProductionPanel(); };
+            _sizeButtons[i] = button;
+            sizeRow.AddChild(button);
+        }
+
+        box.AddChild(MakeLabel("队长", theme, 13, new Color(0.7f, 0.72f, 0.66f)));
+        var captainRow = new HBoxContainer();
+        captainRow.AddThemeConstantOverride("separation", 4);
+        box.AddChild(captainRow);
+        var captainGroup = new ButtonGroup();
+        for (int i = 0; i < _captainButtons.Length; i++)
+        {
+            int index = i;
+            var button = MakeToggleButton(i == 0 ? "无队长" : "队长", theme);
+            button.ButtonGroup = captainGroup;
+            button.Pressed += () => { _orderCaptain = index; RefreshProductionPanel(); };
+            _captainButtons[i] = button;
+            captainRow.AddChild(button);
+        }
+
+        _productionStatus = MakeLabel(string.Empty, theme, 13, new Color(0.85f, 0.86f, 0.72f));
+        _productionStatus.CustomMinimumSize = new Vector2(300f, 34f);
+        box.AddChild(_productionStatus);
+
+        var orderButton = new Button
+        {
+            Text = "下单生产",
+            Theme = theme,
+            CustomMinimumSize = new Vector2(0f, 32f),
+            FocusMode = Control.FocusModeEnum.None,
+        };
+        orderButton.Pressed += OrderSelected;
+        box.AddChild(orderButton);
+
+        ui.AddChild(_productionPanel);
+        _productionPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
+        _productionPanel.OffsetTop += 238f;
+        _productionPanel.OffsetBottom += 238f;
+        _productionPanel.Visible = false;
+    }
+
+    private static Button MakeToggleButton(string text, Theme theme)
+    {
+        return new Button
+        {
+            Text = text,
+            Theme = theme,
+            ToggleMode = true,
+            CustomMinimumSize = new Vector2(56f, 28f),
+            FocusMode = Control.FocusModeEnum.None,
+        };
+    }
+
+    private void OnModelSelected(int index)
+    {
+        var models = _uiBuilding != null ? ProductionManager.ModelsFor(_uiBuilding.Kind) : System.Array.Empty<FormationKind>();
+        if (index < models.Length)
+        {
+            _orderKind = models[index];
+        }
+
+        RefreshProductionPanel();
+    }
+
+    private void OrderSelected()
+    {
+        if (_uiBuilding == null || _production == null)
+        {
+            return;
+        }
+
+        var captains = _production.Captains;
+        Captain captain = _orderCaptain > 0 && _orderCaptain <= captains.Count
+            ? captains[_orderCaptain - 1]
+            : null;
+        _production.Order(_uiBuilding, _orderKind, _orderUnits, captain);
+        RefreshProductionPanel();
+    }
+
+    private void ConfigureProductionPanel(Building building)
+    {
+        _uiBuilding = building;
+        var models = ProductionManager.ModelsFor(building.Kind);
+        _orderKind = models.Length > 0 ? models[0] : default;
+        _orderUnits = 3;
+        _orderCaptain = 0;
+        RefreshProductionPanel();
+    }
+
+    private void RefreshProductionPanel()
+    {
+        if (_productionPanel == null)
+        {
+            return;
+        }
+
+        if (_uiBuilding == null || _production == null || !_production.IsSupported(_uiBuilding))
+        {
+            _productionPanel.Visible = false;
+            return;
+        }
+
+        _productionPanel.Visible = true;
+        _productionTitle.Text = $"{_uiBuilding.DisplayName} · 生产";
+
+        var models = ProductionManager.ModelsFor(_uiBuilding.Kind);
+        for (int i = 0; i < _modelButtons.Length; i++)
+        {
+            bool active = i < models.Length;
+            _modelButtons[i].Visible = active;
+            _modelButtons[i].Disabled = !active;
+            if (active)
+            {
+                _modelButtons[i].Text = ProductionManager.ModelName(models[i]);
+                _modelButtons[i].ButtonPressed = models[i] == _orderKind;
+            }
+        }
+
+        for (int i = 0; i < _sizeButtons.Length; i++)
+        {
+            _sizeButtons[i].ButtonPressed = i + 3 == _orderUnits;
+        }
+
+        var captains = _production.Captains;
+        for (int i = 0; i < _captainButtons.Length; i++)
+        {
+            if (i == 0)
+            {
+                _captainButtons[i].Text = "无队长";
+                _captainButtons[i].Disabled = false;
+            }
+            else if (i - 1 < captains.Count)
+            {
+                var captain = captains[i - 1];
+                _captainButtons[i].Text = $"{captain.Name}·{captain.OriginName}";
+                _captainButtons[i].Disabled = !captain.IsAlive || captain.InUse;
+            }
+            else
+            {
+                _captainButtons[i].Disabled = true;
+            }
+
+            _captainButtons[i].ButtonPressed = i == _orderCaptain;
+        }
+
+        _productionStatus.Text =
+            _production.StatusOf(_uiBuilding) +
+            $"\n废铁 {_resources.Get(ResourceKind.Scrap):F0}    合成编队 {CountPlayerCombatFormations()} / {ProductionManager.MaxFormations}";
+    }
+
+    private int CountPlayerCombatFormations()
+    {
+        int count = 0;
+        foreach (var formation in _formations)
+        {
+            if (formation.IsPlayer && formation.Hp > 0f && formation.IsCombatFormation)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private static PanelContainer MakePanel(Theme theme)
@@ -570,6 +793,29 @@ public partial class BattleManager : Node3D
         _beams[formation] = beam;
     }
 
+    /// <summary>生产完成后在指定格下发编队，占用与阻挡规则与常规编队一致。</summary>
+    internal bool TrySpawnFormation(Formation formation, HexCoord coord)
+    {
+        if (!_map.Contains(coord))
+        {
+            return false;
+        }
+
+        if (!formation.IsAir
+            && (_map.IsBlocked(coord) || (_buildings != null && _buildings.IsOccupied(coord))))
+        {
+            return false;
+        }
+
+        if (TableOf(formation).ContainsKey(coord))
+        {
+            return false;
+        }
+
+        SpawnFormation(formation, coord);
+        return true;
+    }
+
     private Dictionary<HexCoord, Formation> TableOf(Formation formation) => formation.IsAir ? _air : _ground;
 
     internal IReadOnlyList<Formation> Formations => _formations;
@@ -616,6 +862,12 @@ public partial class BattleManager : Node3D
             _selectedBuilding.SetSelected(false);
             _selectedBuilding = null;
         }
+
+        if (_uiBuilding != null)
+        {
+            _uiBuilding = null;
+            RefreshProductionPanel();
+        }
     }
 
     private void SetSelectedBuilding(Building building)
@@ -633,6 +885,30 @@ public partial class BattleManager : Node3D
         SetSelected(null);
         _selectedBuilding = building;
         building?.SetSelected(true);
+
+        if (building != null && _production != null && _production.IsSupported(building))
+        {
+            ConfigureProductionPanel(building);
+        }
+        else
+        {
+            _uiBuilding = null;
+            RefreshProductionPanel();
+        }
+    }
+
+    internal void OnBuildingDestroyed(Building building)
+    {
+        if (_uiBuilding == building)
+        {
+            _uiBuilding = null;
+            RefreshProductionPanel();
+        }
+
+        if (_selectedBuilding == building)
+        {
+            _selectedBuilding = null;
+        }
     }
 
     private void CommandAt(Vector2 screenPosition)
@@ -981,6 +1257,166 @@ public partial class BattleManager : Node3D
         }
     }
 
+    /// <summary>坦克与飞船补员：基地更快，补给车在前线更慢且会因补给车被毁中断。</summary>
+    private void UpdateReplenish(float dt)
+    {
+        foreach (var formation in _formations)
+        {
+            if (!formation.Replenishing || formation.Hp <= 0f)
+            {
+                continue;
+            }
+
+            if (formation.Hp >= formation.MaxHp - 0.01f)
+            {
+                StopReplenish(formation, $"{formation.DisplayName} 补员完成");
+                continue;
+            }
+
+            Building baseBuilding = null;
+            if (formation.ReplenishTruck != null)
+            {
+                var truck = formation.ReplenishTruck;
+                if (truck.Hp <= 0f || truck.IsMoving || truck.Coord.DistanceTo(formation.Coord) > 1)
+                {
+                    StopReplenish(formation, "补给车被击毁或离开，前线补员中断");
+                    continue;
+                }
+            }
+            else
+            {
+                baseBuilding = AdjacentProductionBuilding(formation.Coord);
+                if (baseBuilding == null)
+                {
+                    StopReplenish(formation, "离开生产建筑，补员中断");
+                    continue;
+                }
+            }
+
+            float rate = formation.ReplenishTruck != null ? 4f : 12f;
+            if (baseBuilding != null)
+            {
+                rate *= Mathf.Max(0.25f, baseBuilding.Efficiency);
+            }
+
+            float heal = Mathf.Min(rate * dt, formation.MaxHp - formation.Hp);
+            float cost = heal * 0.4f;
+            float paid = _resources.Consume(ResourceKind.Scrap, cost);
+            if (paid < cost - 0.001f)
+            {
+                if (cost > 0f)
+                {
+                    formation.Hp = Mathf.Min(formation.MaxHp, formation.Hp + heal * (paid / cost));
+                }
+
+                StopReplenish(formation, "废铁不足，补员中断");
+                continue;
+            }
+
+            formation.Hp = Mathf.Min(formation.MaxHp, formation.Hp + heal);
+        }
+    }
+
+    private void TryStartReplenish(Formation formation)
+    {
+        if (formation == null || !formation.IsPlayer)
+        {
+            ShowMessage("先选中一个坦克或飞船编队");
+            return;
+        }
+
+        if (formation.IsInfantry && formation.Hp < formation.MaxHp)
+        {
+            ShowMessage("步兵减员等同人口死亡，无法补员，只能重新招募");
+            return;
+        }
+
+        if (!formation.CanReplenish)
+        {
+            ShowMessage("该编队无需补员");
+            return;
+        }
+
+        formation.ReplenishTruck = null;
+        foreach (var truck in _formations)
+        {
+            if (truck.Kind != FormationKind.SupplyTruck || !truck.IsPlayer || truck.Hp <= 0f || truck.IsMoving)
+            {
+                continue;
+            }
+
+            if (truck.Coord.DistanceTo(formation.Coord) <= 1)
+            {
+                formation.ReplenishTruck = truck;
+                break;
+            }
+        }
+
+        if (formation.ReplenishTruck == null && AdjacentProductionBuilding(formation.Coord) == null)
+        {
+            ShowMessage("需贴近补给车，或回到兵营 / 坦克厂 / 机库旁补员");
+            return;
+        }
+
+        formation.Replenishing = true;
+        ShowMessage(formation.ReplenishTruck != null ? "补给车开始前线补员（较慢）" : "在基地开始补员");
+    }
+
+    private void StopReplenish(Formation formation, string message)
+    {
+        formation.Replenishing = false;
+        formation.ReplenishTruck = null;
+        ShowMessage(message);
+    }
+
+    private Building AdjacentProductionBuilding(HexCoord coord)
+    {
+        if (_buildings == null)
+        {
+            return null;
+        }
+
+        foreach (var building in _buildings.Buildings)
+        {
+            if (!building.IsAlive || !building.Connected || !building.IsPlayer)
+            {
+                continue;
+            }
+
+            if (building.Kind is not (BuildingKind.Barracks or BuildingKind.TankFactory or BuildingKind.Hangar))
+            {
+                continue;
+            }
+
+            if (building.Coord.DistanceTo(coord) <= 1)
+            {
+                return building;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>步兵减员按人口死亡处理，不可逆。</summary>
+    private void RegisterInfantryLosses()
+    {
+        foreach (var formation in _formations)
+        {
+            if (!formation.IsInfantry || formation.Hp <= 0f)
+            {
+                continue;
+            }
+
+            int alive = formation.AliveUnits;
+            if (alive < formation.LastAliveUnits)
+            {
+                _buildings.RegisterInfantryLoss(formation.LastAliveUnits - alive);
+            }
+
+            formation.LastAliveUnits = alive;
+        }
+    }
+
     private void UpdateCombat(float dt)
     {
         var pendingDamage = new Dictionary<Formation, float>();
@@ -1001,7 +1437,7 @@ public partial class BattleManager : Node3D
             {
                 float penetration = EffectivePenetration(attacker, target);
                 float multiplier = PenetrationMultiplier(penetration, target.Armor);
-                float dps = attacker.BaseDps * attacker.AttackScale * multiplier;
+                float dps = attacker.BaseDps * attacker.AttackScale * multiplier * attacker.CaptainDamageMultiplier;
                 pendingDamage[target] = pendingDamage.GetValueOrDefault(target) + dps * dt;
                 continue;
             }
@@ -1018,7 +1454,8 @@ public partial class BattleManager : Node3D
                 building.Armor);
             pendingBuildingDamage[building] =
                 pendingBuildingDamage.GetValueOrDefault(building)
-                + attacker.BaseDps * attacker.AttackScale * buildingMultiplier * dt;
+                + attacker.BaseDps * attacker.AttackScale * buildingMultiplier
+                * attacker.CaptainDamageMultiplier * dt;
         }
 
         foreach (var pair in pendingDamage)
@@ -1164,7 +1601,23 @@ public partial class BattleManager : Node3D
         ReleaseReservations(formation);
         formation.Path.Clear();
         formation.CurrentTarget = null;
+        formation.Replenishing = false;
+        formation.ReplenishTruck = null;
+
+        if (formation.IsInfantry && formation.LastAliveUnits > 0)
+        {
+            _buildings.RegisterInfantryLoss(formation.LastAliveUnits);
+            formation.LastAliveUnits = 0;
+        }
+
         _formations.Remove(formation);
+
+        if (formation.Captain != null)
+        {
+            formation.Captain.IsAlive = false;
+            formation.Captain.InUse = false;
+            ShowMessage($"{formation.DisplayName} 覆灭，队长 {formation.Captain.Name} 阵亡");
+        }
 
         if (_markerOwner == formation)
         {
@@ -1181,6 +1634,12 @@ public partial class BattleManager : Node3D
             if (other.RefuelTarget == formation)
             {
                 other.RefuelTarget = null;
+            }
+
+            if (other.ReplenishTruck == formation)
+            {
+                other.ReplenishTruck = null;
+                other.Replenishing = false;
             }
 
             if (other.CurrentTarget == formation)
@@ -1291,6 +1750,11 @@ public partial class BattleManager : Node3D
 
     private void UpdateHud()
     {
+        if (_uiBuilding != null)
+        {
+            RefreshProductionPanel();
+        }
+
         if (_selectedBuilding != null)
         {
             var building = _selectedBuilding;
@@ -1401,9 +1865,16 @@ public partial class BattleManager : Node3D
                 : formation.IsMoving
                     ? "移动中"
                     : "待命";
+        string captainLine = formation.Captain == null
+            ? string.Empty
+            : $"\n队长: {formation.Captain.Name}（{formation.Captain.OriginName}·擅长{formation.Captain.Specialty}）" +
+              $"    加成 ×{formation.CaptainDamageMultiplier:0.###}";
+        string replenishLine = formation.CanReplenish
+            ? "\n按 R 补员：贴近补给车较慢，回兵营 / 坦克厂 / 机库更快"
+            : string.Empty;
         _infoLabel.Text =
             $"{formation.DisplayName}\n燃油: {formation.Fuel:F0} / {formation.MaxFuel:F0}{fuelState}\n" +
-            $"{combat}状态: {status}\n{restriction}{stormLine}";
+            $"{combat}状态: {status}\n{restriction}{stormLine}{captainLine}{replenishLine}";
     }
 
     private void UpdateClockHud()

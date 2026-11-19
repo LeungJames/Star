@@ -18,10 +18,12 @@ public class BuildingManager
     private readonly HashSet<Building> _connected = new();
 
     private bool _sandstormActive;
+    private int _populationLoss;
 
     public Building Core { get; private set; }
     public IReadOnlyList<Building> Buildings => _buildings;
     public HexCoord? CoreCoord => Core != null ? Core.Coord : null;
+    public int PopulationLoss => _populationLoss;
     public int PowerOutput { get; private set; }
     public int PowerDemand { get; private set; }
     public int PowerSupplied { get; private set; }
@@ -42,10 +44,28 @@ public class BuildingManager
         Place(BuildingKind.CoreTower, new HexCoord(0, 5));
         Place(BuildingKind.PowerPlant, new HexCoord(-1, 5));
         Place(BuildingKind.ProductionLine, new HexCoord(1, 5));
+        Place(BuildingKind.Barracks, new HexCoord(0, 4));
+        Place(BuildingKind.TankFactory, new HexCoord(-2, 5));
+        Place(BuildingKind.Hangar, new HexCoord(2, 5));
         Place(BuildingKind.Habitat, new HexCoord(-1, 6));
         Place(BuildingKind.Storage, new HexCoord(1, 6));
         Place(BuildingKind.OutpostStorage, new HexCoord(-4, 1));
         Update(0f);
+    }
+
+    /// <summary>步兵减员视为军人人口死亡，不可逆。</summary>
+    public void RegisterInfantryLoss(int units)
+    {
+        if (units <= 0)
+        {
+            return;
+        }
+
+        _populationLoss += units;
+        if (_battle != null)
+        {
+            _battle.ShowMessage($"步兵减员 {units} 人，军人人口永久损失");
+        }
     }
 
     public Building Place(BuildingKind kind, HexCoord coord)
@@ -152,7 +172,7 @@ public class BuildingManager
 
     private void UpdatePopulationAndStaffing()
     {
-        Population = 4 + _buildings.Count(b => b.Kind == BuildingKind.Habitat && b.IsAlive) * 8;
+        Population = Mathf.Max(1, 4 + _buildings.Count(b => b.Kind == BuildingKind.Habitat && b.IsAlive) * 8 - _populationLoss);
         TotalJobs = _buildings.Where(b => b.IsAlive).Sum(b => b.JobSlots);
 
         int available = Population;
@@ -289,6 +309,7 @@ public class BuildingManager
         }
 
         building.QueueFree();
+        _battle.OnBuildingDestroyed(building);
 
         if (wasCore)
         {
