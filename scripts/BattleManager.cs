@@ -45,6 +45,7 @@ public partial class BattleManager : Node3D
     private CylinderMesh _freeHexMesh;
     private StandardMaterial3D _ruinMaterial;
     private BuildingManager _buildings;
+    private ResourceManager _resources;
     private Building _selectedBuilding;
     private bool _gameOver;
     private Formation _markerOwner;
@@ -94,6 +95,7 @@ public partial class BattleManager : Node3D
         };
 
         SpawnFormations();
+        _resources = new ResourceManager(this, _buildings);
         UpdateVisibility();
         _enemyCommander = new EnemyCommander(this);
 
@@ -113,6 +115,7 @@ public partial class BattleManager : Node3D
         UpdateMovement(dt);
         UpdateRefuel(dt);
         _buildings.Update(dt);
+        _resources.Update(dt);
         UpdateVisibility();
         UpdateCombat(dt);
         UpdateBeams();
@@ -450,6 +453,7 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("迷雾：未探索区域被遮蔽，敌人进入视野才会现身", theme, 15, new Color(0.62f, 0.78f, 0.95f)));
         hintBox.AddChild(MakeLabel("沙暴季：视野下降、油耗上升、移动变慢", theme, 15, new Color(0.95f, 0.7f, 0.45f)));
         hintBox.AddChild(MakeLabel("建筑：维修车贴住受损建筑即可就地维修", theme, 15, new Color(0.72f, 0.9f, 0.7f)));
+        hintBox.AddChild(MakeLabel("资源：除燃料外自动回仓；仓储满则浪费，被摧毁会掉落库存", theme, 15, new Color(0.85f, 0.82f, 0.6f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
@@ -489,7 +493,7 @@ public partial class BattleManager : Node3D
 
         var basePanel = MakePanel(theme);
         _baseStatsLabel = MakeLabel(string.Empty, theme, 14, new Color(0.78f, 0.86f, 0.78f));
-        _baseStatsLabel.CustomMinimumSize = new Vector2(230f, 0f);
+        _baseStatsLabel.CustomMinimumSize = new Vector2(330f, 0f);
         basePanel.AddChild(_baseStatsLabel);
         ui.AddChild(basePanel);
         basePanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomRight, Control.LayoutPresetMode.Minsize, 16);
@@ -1300,9 +1304,12 @@ public partial class BattleManager : Node3D
             string jobs = building.JobSlots > 0
                 ? $"岗位: {building.StaffedJobs} / {building.JobSlots}"
                 : "岗位: 无需求";
+            string storage = _resources != null && _resources.CapacityOf(building) > 0f
+                ? $"\n仓储上限: +{_resources.CapacityOf(building):F0} / 种资源（断连时不生效）"
+                : string.Empty;
             _infoLabel.Text =
                 $"{owner}{building.DisplayName}\n耐久: {building.Hp:F0} / {building.MaxHp:F0}    护甲: {building.Armor:F0}\n" +
-                $"{connected}\n{powerLine}\n{jobs}    效率: {building.Efficiency * 100f:F0}%" +
+                $"{connected}\n{powerLine}\n{jobs}    效率: {building.Efficiency * 100f:F0}%{storage}" +
                 $"{(building.UnderSandstorm ? "\n沙暴中：结构持续受损" : string.Empty)}";
             return;
         }
@@ -1460,10 +1467,21 @@ public partial class BattleManager : Node3D
         string power = _buildings.Core == null
             ? "核心：已损毁"
             : $"电力 {_buildings.PowerSupplied} / {_buildings.PowerDemand}（产能 {_buildings.PowerOutput}）";
+        string resources = _resources == null
+            ? string.Empty
+            : $"\n废铁 {_resources.Get(ResourceKind.Scrap):F0}  燃料 {_resources.Get(ResourceKind.Fuel):F0}  " +
+              $"食物 {_resources.Get(ResourceKind.Food):F0}\n" +
+              $"药品 {_resources.Get(ResourceKind.Medicine):F0}  知识数据 {_resources.Get(ResourceKind.Data):F0}  " +
+              $"上限 {_resources.Capacity:F0}";
         _baseStatsLabel.Text =
             $"基地状态\n{power}\n限电建筑 {_buildings.ShedCount} 座    断连 {_buildings.DisconnectedCount} 座\n" +
             $"人口 {_buildings.Population}    岗位 {_buildings.AssignedJobs} / {_buildings.TotalJobs}\n" +
-            $"建筑 {_buildings.Buildings.Count} 座";
+            $"建筑 {_buildings.Buildings.Count} 座{resources}";
+    }
+
+    internal void OnStorageDestroyed(Building building)
+    {
+        _resources?.OnStorageDestroyed(building);
     }
 
     private void UpdateMessage(float dt)

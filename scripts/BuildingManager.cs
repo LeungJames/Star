@@ -298,5 +298,6 @@ public class BuildingManager
         }
 
         _battle.ShowMessage($"{building.DisplayName} 被摧毁，原地留下废墟");
+        _battle.OnStorageDestroyed(building);
     }
 }
