@@ -168,6 +168,12 @@ public class BuildingManager
                 _battle.ShowMessage($"{building.DisplayName} 与核心断开，效率下降");
             }
         }
+
+        float efficiencyMultiplier = _battle.Tech != null ? _battle.Tech.BuildingEfficiencyMultiplier : 1f;
+        foreach (var building in _buildings)
+        {
+            building.EfficiencyMultiplier = efficiencyMultiplier;
+        }
     }
 
     private void UpdatePopulationAndStaffing()
@@ -200,7 +206,8 @@ public class BuildingManager
             }
 
             float staff = building.JobSlots > 0 ? building.StaffedJobs / (float)building.JobSlots : 1f;
-            PowerOutput += Mathf.RoundToInt(building.PowerOutput * staff);
+            float tech = _battle.Tech != null ? _battle.Tech.PowerOutputMultiplier : 1f;
+            PowerOutput += Mathf.RoundToInt(building.PowerOutput * staff * tech);
         }
 
         var consumers = _buildings

@@ -14,6 +14,8 @@ public enum FormationKind
     SupplyTruck,
     RepairTruck,
     Alien,
+    ScienceTeam,
+    SurveyVehicle,
 }
 
 public enum Faction
@@ -58,12 +60,15 @@ public partial class Formation : Node3D
     public bool Replenishing { get; set; }
     public Formation ReplenishTruck { get; set; }
     public int LastAliveUnits { get; set; }
+    public TechLine? CarriedSample { get; set; }
+    public float SampleProgress { get; set; }
     public MeshInstance3D Highlight { get; private set; }
 
     public bool IsAir => Kind is FormationKind.LightShip or FormationKind.MediumShip;
     public bool IsTruck => Kind == FormationKind.SupplyTruck;
     public bool IsInfantry => Kind == FormationKind.Infantry;
     public bool IsRepairTruck => Kind == FormationKind.RepairTruck;
+    public bool IsScienceTeam => Kind == FormationKind.ScienceTeam;
     public bool IsTank => Kind is FormationKind.LightTank or FormationKind.MediumTank or FormationKind.HeavyTank;
     public bool IsShip => Kind is FormationKind.LightShip or FormationKind.MediumShip;
     public bool IsCombatFormation => IsTank || IsShip || IsInfantry;
@@ -296,6 +301,29 @@ public partial class Formation : Node3D
         };
     }
 
+    public static Formation CreateScienceTeam()
+    {
+        return new Formation
+        {
+            Kind = FormationKind.ScienceTeam,
+            Faction = Faction.Player,
+            DisplayName = "科考队 · 科学家 2 人",
+            Units = 2,
+            Speed = 2.5f,
+            MaxFuel = 100f,
+            Fuel = 100f,
+            FuelDrainPerSecond = 2f,
+            MaxHp = 60f,
+            Hp = 60f,
+            Armor = 5f,
+            Penetration = 0f,
+            Range = 0,
+            BaseDps = 0f,
+            VisionRadius = 4,
+            LastAliveUnits = 2,
+        };
+    }
+
     public static Formation CreateAlienSwarm(int units = 3)
     {
         return new Formation
@@ -397,6 +425,9 @@ public partial class Formation : Node3D
                 break;
             case FormationKind.Alien:
                 BuildAliens();
+                break;
+            case FormationKind.ScienceTeam:
+                BuildScienceTeam();
                 break;
         }
 
@@ -561,6 +592,26 @@ public partial class Formation : Node3D
         AddBox(_body, new Vector3(0.58f, 0.3f, 0.34f), new Vector3(0f, 0.42f, -0.62f), cab);
         AddBox(_body, new Vector3(0.18f, 0.18f, 0.5f), new Vector3(0f, 0.78f, 0.15f), tool);
         AddBox(_body, new Vector3(0.4f, 0.1f, 0.1f), new Vector3(0f, 1.0f, 0.35f), tool);
+    }
+
+    private void BuildScienceTeam()
+    {
+        var coat = new StandardMaterial3D { AlbedoColor = new Color(0.88f, 0.9f, 0.86f), Roughness = 0.7f };
+        var gear = new StandardMaterial3D { AlbedoColor = new Color(0.35f, 0.55f, 0.45f), Roughness = 0.6f };
+        var offsets = new[]
+        {
+            new Vector3(-0.3f, 0f, 0.2f),
+            new Vector3(0.3f, 0f, -0.15f),
+        };
+
+        foreach (var offset in offsets)
+        {
+            AddBox(_body, new Vector3(0.26f, 0.52f, 0.24f), offset + new Vector3(0f, 0.42f, 0f), coat);
+            AddBox(_body, new Vector3(0.18f, 0.16f, 0.18f), offset + new Vector3(0f, 0.76f, 0f), gear);
+            AddBox(_body, new Vector3(0.16f, 0.22f, 0.1f), offset + new Vector3(0f, 0.5f, 0.16f), gear);
+        }
+
+        AddBox(_body, new Vector3(0.5f, 0.18f, 0.4f), new Vector3(0f, 0.12f, -0.45f), gear);
     }
 
     private void BuildAliens()

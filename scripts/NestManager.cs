@@ -77,7 +77,7 @@ public class NestManager
 
     private readonly BattleManager _battle;
     private readonly List<Nest> _nests = new();
-    private readonly RandomNumberGenerator _rng = new() { Seed = 90210 };
+    private readonly System.Random _rng = new(90210);
     private float _growthTimer;
     private float _spawnTimer;
     private float _respawnTimer = -1f;
@@ -127,6 +127,18 @@ public class NestManager
                 TrySpawnAlien(nest);
             }
         }
+    }
+
+    /// <summary>取样或研究惊动巢穴，立刻孵化一只异种。</summary>
+    public void TriggerAggro()
+    {
+        if (_nests.Count == 0)
+        {
+            return;
+        }
+
+        _battle.ShowMessage("取样惊动了异种巢穴");
+        TrySpawnAlien(_nests[0]);
     }
 
     public void Damage(Nest nest, float amount)
@@ -221,10 +233,10 @@ public class NestManager
     private HexCoord RandomCell()
     {
         int radius = _battle.Map.Radius;
-        int q = _rng.RandiRange(-radius, radius);
+        int q = _rng.Next(-radius, radius + 1);
         int rMin = Mathf.Max(-radius, -q - radius);
         int rMax = Mathf.Min(radius, -q + radius);
-        return new HexCoord(q, _rng.RandiRange(rMin, rMax));
+        return new HexCoord(q, _rng.Next(rMin, rMax + 1));
     }
 
     private void SpawnNest(HexCoord coord, int level)
@@ -297,6 +309,12 @@ public class VictoryManager
             return false;
         }
 
+        if (_battle.Tech == null || !_battle.Tech.ArkUnlocked)
+        {
+            _battle.ShowMessage("修复方舟号需要先点亮生存线「工程体系」");
+            return false;
+        }
+
         if (!HasRepairTruckNearArk())
         {
             _battle.ShowMessage("需要维修车贴近方舟号残骸才能开工");
@@ -319,6 +337,12 @@ public class VictoryManager
         if (BeaconStarted)
         {
             _battle.ShowMessage("信标已经在建设中");
+            return false;
+        }
+
+        if (_battle.Tech == null || !_battle.Tech.BeaconUnlocked)
+        {
+            _battle.ShowMessage("立信标需要先点亮军工线「通信阵列」");
             return false;
         }
 

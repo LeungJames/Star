@@ -46,6 +46,8 @@ public partial class BattleManager : Node3D
     private StandardMaterial3D _ruinMaterial;
     private BuildingManager _buildings;
     private ResourceManager _resources;
+    private TechManager _tech;
+    private ResearchManager _research;
     private ProductionManager _production;
     private NestManager _nests;
     private VictoryManager _victory;
@@ -72,6 +74,11 @@ public partial class BattleManager : Node3D
     private FormationKind _orderKind;
     private int _orderUnits = 3;
     private int _orderCaptain;
+    private Control _uiRoot;
+    private Theme _hudTheme;
+    private PanelContainer _techPanel;
+    private Label _techStatusLabel;
+    private readonly Dictionary<TechNode, Button> _techButtons = new();
 
     internal WorldClock Clock { get; private set; }
 
@@ -110,7 +117,10 @@ public partial class BattleManager : Node3D
 
         SpawnFormations();
         _resources = new ResourceManager(this, _buildings);
-        _production = new ProductionManager(this, _buildings, _resources);
+        _tech = new TechManager(this, _resources);
+        _research = new ResearchManager(this, _tech);
+        _production = new ProductionManager(this, _resources, _tech, _research);
+        BuildTechPanel();
         _map.ClearAround(new HexCoord(-3, -4), 1);
         _nests = new NestManager(this);
         _victory = new VictoryManager(this, _buildings, _resources);
@@ -129,6 +139,8 @@ public partial class BattleManager : Node3D
 
         float dt = (float)delta;
         Clock.Update(dt);
+        _tech.Update(dt);
+        _research.Update(dt);
         _nests.Update(dt);
         _victory.Update(dt);
         _enemyCommander.Update(dt);
@@ -146,6 +158,11 @@ public partial class BattleManager : Node3D
         UpdateHud();
         UpdateClockHud();
         UpdateBaseStats();
+        if (_techPanel != null && _techPanel.Visible)
+        {
+            RefreshTechPanel();
+        }
+
         UpdateMessage(dt);
     }
 
@@ -168,6 +185,13 @@ public partial class BattleManager : Node3D
             if (key.Keycode == Key.B)
             {
                 _victory.TryStartBeacon();
+                return;
+            }
+
+            if (key.Keycode == Key.T && _techPanel != null)
+            {
+                _techPanel.Visible = !_techPanel.Visible;
+                RefreshTechPanel();
                 return;
             }
         }
@@ -339,7 +363,8 @@ public partial class BattleManager : Node3D
     internal int EffectiveVision(Formation formation)
     {
         int penalty = Clock != null && Clock.IsStorm ? WorldClock.StormVisionPenalty : 0;
-        return Mathf.Max(1, formation.VisionRadius - penalty);
+        int tech = formation.IsPlayer && _tech != null ? _tech.VisionBonus : 0;
+        return Mathf.Max(1, formation.VisionRadius - penalty + tech);
     }
 
     private float WeatherSpeedMultiplier => Clock.IsStorm ? WorldClock.StormSpeedMultiplier : 1f;
@@ -500,7 +525,8 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("资源：除燃料外自动回仓；仓储满则浪费，被摧毁会掉落库存", theme, 15, new Color(0.85f, 0.82f, 0.6f)));
         hintBox.AddChild(MakeLabel("生产：选中兵营 / 坦克厂 / 机库下单；按 R 补员", theme, 15, new Color(0.78f, 0.8f, 0.95f)));
         hintBox.AddChild(MakeLabel("异种巢穴会成长并孵化，清剿后在别处重生", theme, 15, new Color(0.95f, 0.6f, 0.72f)));
-        hintBox.AddChild(MakeLabel("胜利：V 修复方舟     B 立信标     或撑过最后一轮沙暴", theme, 15, new Color(0.62f, 0.92f, 0.66f)));
+        hintBox.AddChild(MakeLabel("胜利：V 修复方舟（工程体系）  B 立信标（通信阵列）  或撑过最后一轮沙暴", theme, 15, new Color(0.62f, 0.92f, 0.66f)));
+        hintBox.AddChild(MakeLabel("科技：按 T 打开三条科技线与逆向工程面板", theme, 15, new Color(0.72f, 0.88f, 0.96f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
@@ -565,7 +591,120 @@ public partial class BattleManager : Node3D
         ui.AddChild(_victoryLabel);
         _victoryLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
+        _uiRoot = ui;
+        _hudTheme = theme;
         BuildProductionPanel(ui, theme);
+    }
+
+    private void BuildTechPanel()
+    {
+        if (_uiRoot == null || _tech == null)
+        {
+            return;
+        }
+
+        _techPanel = MakePanel(_hudTheme);
+        _techPanel.CustomMinimumSize = new Vector2(430f, 0f);
+        var box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", 3);
+        _techPanel.AddChild(box);
+
+        box.AddChild(MakeLabel("科技与逆向工程（T 关闭）", _hudTheme, 16, new Color(0.82f, 0.9f, 0.95f)));
+        _techStatusLabel = MakeLabel(string.Empty, _hudTheme, 13, new Color(0.8f, 0.82f, 0.72f));
+        box.AddChild(_techStatusLabel);
+
+        TechLine[] lines = { TechLine.Military, TechLine.Survival, TechLine.Civilization };
+        foreach (var line in lines)
+        {
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 3);
+            box.AddChild(row);
+            row.AddChild(MakeLabel(TechManager.LineName(line), _hudTheme, 13, new Color(0.7f, 0.72f, 0.66f)));
+            foreach (var node in _tech.Nodes)
+            {
+                if (node.Line != line)
+                {
+                    continue;
+                }
+
+                var button = new Button
+                {
+                    Theme = _hudTheme,
+                    CustomMinimumSize = new Vector2(78f, 30f),
+                    FocusMode = Control.FocusModeEnum.None,
+                };
+                var target = node;
+                button.Pressed += () => { _tech.TryStart(target); RefreshTechPanel(); };
+                row.AddChild(button);
+                _techButtons[node] = button;
+            }
+        }
+
+        var actionRow = new HBoxContainer();
+        actionRow.AddThemeConstantOverride("separation", 4);
+        box.AddChild(actionRow);
+
+        var deploy = new Button
+        {
+            Text = "部署科考队",
+            Theme = _hudTheme,
+            CustomMinimumSize = new Vector2(110f, 30f),
+            FocusMode = Control.FocusModeEnum.None,
+        };
+        deploy.Pressed += () => { _research.TryDeployTeam(); RefreshTechPanel(); };
+        actionRow.AddChild(deploy);
+
+        foreach (var line in lines)
+        {
+            var target = line;
+            var button = new Button
+            {
+                Text = $"研究{TechManager.LineName(line)}样本",
+                Theme = _hudTheme,
+                CustomMinimumSize = new Vector2(100f, 30f),
+                FocusMode = Control.FocusModeEnum.None,
+            };
+            button.Pressed += () => { _research.TryResearchSample(target); RefreshTechPanel(); };
+            actionRow.AddChild(button);
+        }
+
+        _uiRoot.AddChild(_techPanel);
+        _techPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight, Control.LayoutPresetMode.Minsize, 16);
+        _techPanel.OffsetTop += 158f;
+        _techPanel.OffsetBottom += 158f;
+        _techPanel.GrowHorizontal = Control.GrowDirection.Begin;
+        _techPanel.Visible = false;
+        RefreshTechPanel();
+    }
+
+    private void RefreshTechPanel()
+    {
+        if (_techPanel == null || _tech == null)
+        {
+            return;
+        }
+
+        foreach (var pair in _techButtons)
+        {
+            var node = pair.Key;
+            var button = pair.Value;
+            float cost = _tech.Cost(node);
+            button.Text = node.Unlocked ? $"✓{node.Name}" : $"{node.Name}\n{cost:F0} 数据";
+            button.Disabled = node.Unlocked || (_tech.Researching != null && _tech.Researching != node);
+            button.Modulate = node.Unlocked ? new Color(0.65f, 0.95f, 0.65f) : Colors.White;
+        }
+
+        var unstable = new System.Text.StringBuilder();
+        foreach (var kind in _tech.Unstable)
+        {
+            unstable.Append($"{TechManager.UnstableName(kind)} ");
+        }
+
+        string progress = _tech.Researching == null
+            ? "科技研究：空闲"
+            : $"科技研究：{_tech.Researching.Name} {_tech.ResearchProgress * 100f:F0}%";
+        _techStatusLabel.Text =
+            $"{progress}\n{_research.StatusText()}\n不稳定科技：{(unstable.Length > 0 ? unstable.ToString() : "无")}";
     }
 
     private void BuildProductionPanel(Control ui, Theme theme)
@@ -639,8 +778,8 @@ public partial class BattleManager : Node3D
 
         ui.AddChild(_productionPanel);
         _productionPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
-        _productionPanel.OffsetTop += 270f;
-        _productionPanel.OffsetBottom += 270f;
+        _productionPanel.OffsetTop += 294f;
+        _productionPanel.OffsetBottom += 294f;
         _productionPanel.Visible = false;
     }
 
@@ -658,7 +797,9 @@ public partial class BattleManager : Node3D
 
     private void OnModelSelected(int index)
     {
-        var models = _uiBuilding != null ? ProductionManager.ModelsFor(_uiBuilding.Kind) : System.Array.Empty<FormationKind>();
+        var models = _uiBuilding != null && _production != null
+            ? _production.ModelsFor(_uiBuilding.Kind)
+            : System.Array.Empty<FormationKind>();
         if (index < models.Length)
         {
             _orderKind = models[index];
@@ -685,7 +826,7 @@ public partial class BattleManager : Node3D
     private void ConfigureProductionPanel(Building building)
     {
         _uiBuilding = building;
-        var models = ProductionManager.ModelsFor(building.Kind);
+        var models = _production.ModelsFor(building.Kind);
         _orderKind = models.Length > 0 ? models[0] : default;
         _orderUnits = 3;
         _orderCaptain = 0;
@@ -708,7 +849,7 @@ public partial class BattleManager : Node3D
         _productionPanel.Visible = true;
         _productionTitle.Text = $"{_uiBuilding.DisplayName} · 生产";
 
-        var models = ProductionManager.ModelsFor(_uiBuilding.Kind);
+        var models = _production.ModelsFor(_uiBuilding.Kind);
         for (int i = 0; i < _modelButtons.Length; i++)
         {
             bool active = i < models.Length;
@@ -855,6 +996,7 @@ public partial class BattleManager : Node3D
     internal IReadOnlyList<Formation> Formations => _formations;
     internal HexMap Map => _map;
     internal ResourceManager Resources => _resources;
+    internal TechManager Tech => _tech;
 
     internal bool IsGroundCellOccupied(HexCoord coord) =>
         _ground.ContainsKey(coord) || (_buildings != null && _buildings.IsOccupied(coord));
@@ -1171,7 +1313,8 @@ public partial class BattleManager : Node3D
                 continue;
             }
 
-            float remaining = formation.Speed * WeatherSpeedMultiplier * dt;
+            float remaining = formation.Speed * WeatherSpeedMultiplier
+                * (formation.IsPlayer ? _tech.SpeedMultiplier : 1f) * dt;
             float moved = 0f;
 
             while (remaining > 0f && formation.Path.Count > 0)
@@ -1204,7 +1347,8 @@ public partial class BattleManager : Node3D
             {
                 formation.Fuel = Mathf.Max(
                     0f,
-                    formation.Fuel - formation.FuelDrainPerSecond * WeatherFuelMultiplier * dt);
+                    formation.Fuel - formation.FuelDrainPerSecond * WeatherFuelMultiplier
+                    * (formation.IsPlayer ? _tech.FuelMultiplier : 1f) * dt);
                 if (formation.Fuel <= 0f && formation.Path.Count > 0)
                 {
                     StopForNoFuel(formation);
@@ -1331,7 +1475,8 @@ public partial class BattleManager : Node3D
                 }
             }
 
-            float rate = formation.ReplenishTruck != null ? 4f : 12f;
+            float rate = (formation.ReplenishTruck != null ? 4f : 12f)
+                * (_tech != null ? _tech.ReplenishMultiplier : 1f);
             if (baseBuilding != null)
             {
                 rate *= Mathf.Max(0.25f, baseBuilding.Efficiency);
@@ -1476,8 +1621,10 @@ public partial class BattleManager : Node3D
             if (target != null)
             {
                 float penetration = EffectivePenetration(attacker, target);
-                float multiplier = PenetrationMultiplier(penetration, target.Armor);
-                float dps = attacker.BaseDps * attacker.AttackScale * multiplier * attacker.CaptainDamageMultiplier;
+                float armor = target.Armor + (target.IsPlayer ? PlayerArmorBonus : 0f);
+                float multiplier = PenetrationMultiplier(penetration, armor);
+                float dps = attacker.BaseDps * attacker.AttackScale * multiplier
+                    * attacker.CaptainDamageMultiplier * PlayerDamageMultiplier(attacker);
                 pendingDamage[target] = pendingDamage.GetValueOrDefault(target) + dps * dt;
                 continue;
             }
@@ -1492,7 +1639,7 @@ public partial class BattleManager : Node3D
                 pendingBuildingDamage[building] =
                     pendingBuildingDamage.GetValueOrDefault(building)
                     + attacker.BaseDps * attacker.AttackScale * buildingMultiplier
-                    * attacker.CaptainDamageMultiplier * dt;
+                    * attacker.CaptainDamageMultiplier * PlayerDamageMultiplier(attacker) * dt;
                 continue;
             }
 
@@ -1508,7 +1655,7 @@ public partial class BattleManager : Node3D
             pendingNestDamage[nest] =
                 pendingNestDamage.GetValueOrDefault(nest)
                 + attacker.BaseDps * attacker.AttackScale * nestMultiplier
-                * attacker.CaptainDamageMultiplier * dt;
+                * attacker.CaptainDamageMultiplier * PlayerDamageMultiplier(attacker) * dt;
         }
 
         foreach (var pair in pendingDamage)
@@ -1536,6 +1683,15 @@ public partial class BattleManager : Node3D
             _nests.Damage(pair.Key, pair.Value);
         }
     }
+
+    private float PlayerDamageMultiplier(Formation attacker) =>
+        attacker.IsPlayer && _tech != null ? _tech.DamageMultiplier : 1f;
+
+    /// <summary>不稳定科技“试验装甲”依赖发电站在线，断电或发电站被毁则失效。</summary>
+    private float PlayerArmorBonus =>
+        _tech != null && _tech.HasExperimentalArmor && _buildings != null && _buildings.PowerOutput > 0
+            ? 25f
+            : 0f;
 
     private Nest FindNestTarget(Formation attacker)
     {
@@ -1695,6 +1851,11 @@ public partial class BattleManager : Node3D
         formation.CurrentTarget = null;
         formation.Replenishing = false;
         formation.ReplenishTruck = null;
+
+        if (formation.IsScienceTeam)
+        {
+            _research.OnTeamDestroyed(formation);
+        }
 
         if (formation.IsPlayer && formation.IsInfantry && formation.LastAliveUnits > 0)
         {
@@ -1889,6 +2050,27 @@ public partial class BattleManager : Node3D
 
         var formation = _selected;
         string stormLine = Clock.IsStorm ? "\n沙暴影响：视野 -2 格，移速 ×0.6，油耗 ×1.8" : string.Empty;
+        if (formation.IsScienceTeam)
+        {
+            string task;
+            if (formation.CarriedSample.HasValue)
+            {
+                task = $"携带{TechManager.LineName(formation.CarriedSample.Value)}样本，返回核心塔卸货";
+            }
+            else
+            {
+                var ruin = _research.RuinAtPublic(formation.Coord);
+                task = ruin != null && !ruin.Depleted
+                    ? $"正在取样 {formation.SampleProgress / 6f * 100f:F0}%"
+                    : "前往带科技标签的遗迹驻留取样";
+            }
+
+            _infoLabel.Text =
+                $"科考队\n耐久: {formation.Hp:F0} / {formation.MaxHp:F0}    燃油: {formation.Fuel:F0} / {formation.MaxFuel:F0}\n" +
+                $"状态: {task}\n科考队不占 8 编队名额，依赖补给车续航，被击毁会损失科学家与样本";
+            return;
+        }
+
         if (formation.IsRepairTruck)
         {
             string task = formation.RepairTargetBuilding == null
@@ -2080,6 +2262,11 @@ public partial class BattleManager : Node3D
     internal void OnStorageDestroyed(Building building)
     {
         _resources?.OnStorageDestroyed(building);
+    }
+
+    internal void OnSampleSurveyed()
+    {
+        _nests?.TriggerAggro();
     }
 
     private void UpdateMessage(float dt)

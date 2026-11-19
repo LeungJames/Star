@@ -33,6 +33,7 @@ public partial class Building : Node3D
     public bool Connected { get; set; } = true;
     public bool PowerSatisfied { get; set; } = true;
     public int StaffedJobs { get; set; }
+    public float EfficiencyMultiplier { get; set; } = 1f;
     public bool UnderSandstorm { get; set; }
     public bool IsAlive => Hp > 0f;
     public bool IsPlayer => Faction == Faction.Player;
@@ -46,7 +47,7 @@ public partial class Building : Node3D
             float staff = JobSlots > 0 ? StaffedJobs / (float)JobSlots : 1f;
             float connection = Connected ? 1f : 0.5f;
             float power = PowerSatisfied ? 1f : 0.5f;
-            return staff * connection * power;
+            return staff * connection * power * EfficiencyMultiplier;
         }
     }
 

@@ -66,10 +66,11 @@ public class ResourceManager
             return 0f;
         }
 
+        float multiplier = _battle.Tech != null ? _battle.Tech.StorageMultiplier : 1f;
         return building.Kind switch
         {
-            BuildingKind.Storage => StorageCapacity,
-            BuildingKind.OutpostStorage => OutpostCapacity,
+            BuildingKind.Storage => StorageCapacity * multiplier,
+            BuildingKind.OutpostStorage => OutpostCapacity * multiplier,
             _ => 0f,
         };
     }
@@ -267,7 +268,7 @@ public class ResourceManager
         AddNode(ResourceKind.Scrap, new HexCoord(-4, -3), 0.8f);
         AddNode(ResourceKind.Food, new HexCoord(-2, -4), 0.5f);
         AddNode(ResourceKind.Medicine, new HexCoord(-5, 1), 0.1f);
-        AddNode(ResourceKind.Data, new HexCoord(3, 4), 0.05f);
+        AddNode(ResourceKind.Data, new HexCoord(3, 4), 0.7f);
     }
 
     private void AddNode(ResourceKind kind, HexCoord coord, float rate)

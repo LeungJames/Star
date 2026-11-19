@@ -23,6 +23,8 @@ public class ProductionManager
 
     private readonly BattleManager _battle;
     private readonly ResourceManager _resources;
+    private readonly TechManager _tech;
+    private readonly ResearchManager _research;
     private readonly Dictionary<Building, List<ProductionOrder>> _queues = new();
     private readonly List<Captain> _captains = new()
     {
@@ -31,19 +33,26 @@ public class ProductionManager
         Captain.Worker(),
     };
 
-    public ProductionManager(BattleManager battle, BuildingManager buildings, ResourceManager resources)
+    public ProductionManager(BattleManager battle, ResourceManager resources, TechManager tech, ResearchManager research)
     {
         _battle = battle;
         _resources = resources;
+        _tech = tech;
+        _research = research;
     }
 
     public IReadOnlyList<Captain> Captains => _captains;
 
-    public static FormationKind[] ModelsFor(BuildingKind kind) => kind switch
+    public FormationKind[] ModelsFor(BuildingKind kind) => kind switch
     {
         BuildingKind.Barracks => new[] { FormationKind.Infantry },
-        BuildingKind.TankFactory => new[] { FormationKind.LightTank, FormationKind.MediumTank, FormationKind.HeavyTank },
-        BuildingKind.Hangar => new[] { FormationKind.LightShip, FormationKind.MediumShip },
+        BuildingKind.TankFactory => _tech.HeavyTankUnlocked
+            ? new[] { FormationKind.LightTank, FormationKind.MediumTank, FormationKind.HeavyTank }
+            : new[] { FormationKind.LightTank, FormationKind.MediumTank },
+        BuildingKind.Hangar => _tech.MediumShipUnlocked
+            ? new[] { FormationKind.LightShip, FormationKind.MediumShip }
+            : new[] { FormationKind.LightShip },
+        BuildingKind.ProductionLine => new[] { FormationKind.SurveyVehicle },
         _ => System.Array.Empty<FormationKind>(),
     };
 
@@ -55,6 +64,7 @@ public class ProductionManager
         FormationKind.HeavyTank => "重坦",
         FormationKind.LightShip => "轻型飞船",
         FormationKind.MediumShip => "中型飞船",
+        FormationKind.SurveyVehicle => "科考车",
         _ => "编队",
     };
 
@@ -66,6 +76,7 @@ public class ProductionManager
         FormationKind.HeavyTank => 36f,
         FormationKind.LightShip => 30f,
         FormationKind.MediumShip => 42f,
+        FormationKind.SurveyVehicle => 30f,
         _ => 20f,
     };
 
@@ -77,6 +88,7 @@ public class ProductionManager
         FormationKind.HeavyTank => 4f,
         FormationKind.LightShip => 3.4f,
         FormationKind.MediumShip => 4.2f,
+        FormationKind.SurveyVehicle => 8f,
         _ => 3f,
     };
 
@@ -125,7 +137,7 @@ public class ProductionManager
             return false;
         }
 
-        if (CountPlayerCombatFormations() >= MaxFormations)
+        if (kind != FormationKind.SurveyVehicle && CountPlayerCombatFormations() >= MaxFormations)
         {
             _battle.ShowMessage("编队总数已达上限 8");
             return false;
@@ -144,6 +156,11 @@ public class ProductionManager
             return false;
         }
 
+        if (kind == FormationKind.SurveyVehicle)
+        {
+            captain = null;
+        }
+
         if (!_queues.TryGetValue(building, out var queue))
         {
             queue = new List<ProductionOrder>();
@@ -156,7 +173,9 @@ public class ProductionManager
             return false;
         }
 
-        float cost = ScrapPerUnit(kind) * units;
+        float cost = kind == FormationKind.SurveyVehicle
+            ? 30f
+            : ScrapPerUnit(kind) * units;
         if (_resources.Get(ResourceKind.Scrap) < cost - 0.01f)
         {
             _battle.ShowMessage($"废铁不足（需要 {cost:F0}）");
@@ -175,7 +194,9 @@ public class ProductionManager
             Kind = kind,
             Units = units,
             Captain = captain,
-            TotalTime = SecondsPerUnit(kind) * units,
+            TotalTime = kind == FormationKind.SurveyVehicle
+                ? 6f
+                : SecondsPerUnit(kind) * units,
             Cost = cost,
         });
         _battle.ShowMessage($"{building.DisplayName} 开始生产 {ModelName(kind)} ×{units}，消耗废铁 {cost:F0}");
@@ -215,7 +236,7 @@ public class ProductionManager
                 continue;
             }
 
-            current.Elapsed += dt * efficiency;
+            current.Elapsed += dt * efficiency / _tech.ProductionTimeMultiplier;
             if (current.Elapsed < current.TotalTime)
             {
                 continue;
@@ -240,6 +261,12 @@ public class ProductionManager
 
     private bool TryDeploy(Building building, ProductionOrder order)
     {
+        if (order.Kind == FormationKind.SurveyVehicle)
+        {
+            _research.AddVehicle();
+            return true;
+        }
+
         var formation = CreateFormation(order);
         for (int i = 0; i < HexCoord.Directions.Length; i++)
         {
