@@ -13,6 +13,7 @@ public enum FormationKind
     MediumShip,
     SupplyTruck,
     RepairTruck,
+    Alien,
 }
 
 public enum Faction
@@ -51,6 +52,7 @@ public partial class Formation : Node3D
     public Formation RefuelTarget { get; set; }
     public Formation CurrentTarget { get; set; }
     public Building CurrentBuildingTarget { get; set; }
+    public Nest CurrentNestTarget { get; set; }
     public Building RepairTargetBuilding { get; set; }
     public Captain Captain { get; set; }
     public bool Replenishing { get; set; }
@@ -294,6 +296,28 @@ public partial class Formation : Node3D
         };
     }
 
+    public static Formation CreateAlienSwarm(int units = 3)
+    {
+        return new Formation
+        {
+            Kind = FormationKind.Alien,
+            Faction = Faction.Enemy,
+            DisplayName = $"异种集群 · {units} 只",
+            Units = units,
+            Speed = 2.4f,
+            MaxFuel = 999f,
+            Fuel = 999f,
+            FuelDrainPerSecond = 0f,
+            MaxHp = 30f * units,
+            Hp = 30f * units,
+            Armor = 10f,
+            Penetration = 45f,
+            Range = 1,
+            BaseDps = 14f,
+            VisionRadius = 3,
+        };
+    }
+
     public static Formation CreateEnemyLightTank()
     {
         return new Formation
@@ -370,6 +394,9 @@ public partial class Formation : Node3D
                 break;
             case FormationKind.RepairTruck:
                 BuildRepairTruck();
+                break;
+            case FormationKind.Alien:
+                BuildAliens();
                 break;
         }
 
@@ -534,6 +561,31 @@ public partial class Formation : Node3D
         AddBox(_body, new Vector3(0.58f, 0.3f, 0.34f), new Vector3(0f, 0.42f, -0.62f), cab);
         AddBox(_body, new Vector3(0.18f, 0.18f, 0.5f), new Vector3(0f, 0.78f, 0.15f), tool);
         AddBox(_body, new Vector3(0.4f, 0.1f, 0.1f), new Vector3(0f, 1.0f, 0.35f), tool);
+    }
+
+    private void BuildAliens()
+    {
+        var shell = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.18f, 0.34f), Roughness = 0.9f };
+        var glow = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0.95f, 0.35f, 0.6f),
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            EmissionEnabled = true,
+            Emission = new Color(0.85f, 0.25f, 0.5f),
+            EmissionEnergyMultiplier = 1.4f,
+        };
+        var offsets = new[]
+        {
+            new Vector3(-0.38f, 0f, 0.25f),
+            new Vector3(0.38f, 0f, 0.25f),
+            new Vector3(0f, 0f, -0.4f),
+        };
+
+        foreach (var offset in offsets)
+        {
+            AddBox(_body, new Vector3(0.34f, 0.5f, 0.34f), offset + new Vector3(0f, 0.45f, 0f), shell);
+            AddBox(_body, new Vector3(0.14f, 0.12f, 0.14f), offset + new Vector3(0f, 0.78f, 0f), glow);
+        }
     }
 
     private static void AddBox(Node3D parent, Vector3 size, Vector3 position, Material material)

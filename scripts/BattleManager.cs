@@ -47,6 +47,8 @@ public partial class BattleManager : Node3D
     private BuildingManager _buildings;
     private ResourceManager _resources;
     private ProductionManager _production;
+    private NestManager _nests;
+    private VictoryManager _victory;
     private Building _selectedBuilding;
     private bool _gameOver;
     private Formation _markerOwner;
@@ -59,6 +61,7 @@ public partial class BattleManager : Node3D
     private Label _defeatLabel;
     private float _messageTimer;
     private EnemyCommander _enemyCommander;
+    private Label _victoryLabel;
     private PanelContainer _productionPanel;
     private Label _productionTitle;
     private Label _productionStatus;
@@ -108,6 +111,9 @@ public partial class BattleManager : Node3D
         SpawnFormations();
         _resources = new ResourceManager(this, _buildings);
         _production = new ProductionManager(this, _buildings, _resources);
+        _map.ClearAround(new HexCoord(-3, -4), 1);
+        _nests = new NestManager(this);
+        _victory = new VictoryManager(this, _buildings, _resources);
         UpdateVisibility();
         _enemyCommander = new EnemyCommander(this);
 
@@ -123,6 +129,8 @@ public partial class BattleManager : Node3D
 
         float dt = (float)delta;
         Clock.Update(dt);
+        _nests.Update(dt);
+        _victory.Update(dt);
         _enemyCommander.Update(dt);
         UpdateMovement(dt);
         UpdateRefuel(dt);
@@ -143,10 +151,25 @@ public partial class BattleManager : Node3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (@event is InputEventKey key && key.Pressed && !key.Echo && key.Keycode == Key.R)
+        if (@event is InputEventKey key && key.Pressed && !key.Echo)
         {
-            TryStartReplenish(_selected);
-            return;
+            if (key.Keycode == Key.R)
+            {
+                TryStartReplenish(_selected);
+                return;
+            }
+
+            if (key.Keycode == Key.V)
+            {
+                _victory.TryStartArk();
+                return;
+            }
+
+            if (key.Keycode == Key.B)
+            {
+                _victory.TryStartBeacon();
+                return;
+            }
         }
 
         if (@event is not InputEventMouseButton button || !button.Pressed)
@@ -476,6 +499,8 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("建筑：维修车贴住受损建筑即可就地维修", theme, 15, new Color(0.72f, 0.9f, 0.7f)));
         hintBox.AddChild(MakeLabel("资源：除燃料外自动回仓；仓储满则浪费，被摧毁会掉落库存", theme, 15, new Color(0.85f, 0.82f, 0.6f)));
         hintBox.AddChild(MakeLabel("生产：选中兵营 / 坦克厂 / 机库下单；按 R 补员", theme, 15, new Color(0.78f, 0.8f, 0.95f)));
+        hintBox.AddChild(MakeLabel("异种巢穴会成长并孵化，清剿后在别处重生", theme, 15, new Color(0.95f, 0.6f, 0.72f)));
+        hintBox.AddChild(MakeLabel("胜利：V 修复方舟     B 立信标     或撑过最后一轮沙暴", theme, 15, new Color(0.62f, 0.92f, 0.66f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
@@ -530,6 +555,15 @@ public partial class BattleManager : Node3D
         _defeatLabel.Visible = false;
         ui.AddChild(_defeatLabel);
         _defeatLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        _victoryLabel = MakeLabel(string.Empty, theme, 40, new Color(0.6f, 0.95f, 0.6f));
+        _victoryLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        _victoryLabel.VerticalAlignment = VerticalAlignment.Center;
+        _victoryLabel.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.9f));
+        _victoryLabel.AddThemeConstantOverride("outline_size", 8);
+        _victoryLabel.Visible = false;
+        ui.AddChild(_victoryLabel);
+        _victoryLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
         BuildProductionPanel(ui, theme);
     }
@@ -605,8 +639,8 @@ public partial class BattleManager : Node3D
 
         ui.AddChild(_productionPanel);
         _productionPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
-        _productionPanel.OffsetTop += 238f;
-        _productionPanel.OffsetBottom += 238f;
+        _productionPanel.OffsetTop += 270f;
+        _productionPanel.OffsetBottom += 270f;
         _productionPanel.Visible = false;
     }
 
@@ -820,6 +854,10 @@ public partial class BattleManager : Node3D
 
     internal IReadOnlyList<Formation> Formations => _formations;
     internal HexMap Map => _map;
+    internal ResourceManager Resources => _resources;
+
+    internal bool IsGroundCellOccupied(HexCoord coord) =>
+        _ground.ContainsKey(coord) || (_buildings != null && _buildings.IsOccupied(coord));
 
     private void SelectAt(Vector2 screenPosition)
     {
@@ -1402,7 +1440,7 @@ public partial class BattleManager : Node3D
     {
         foreach (var formation in _formations)
         {
-            if (!formation.IsInfantry || formation.Hp <= 0f)
+            if (!formation.IsPlayer || !formation.IsInfantry || formation.Hp <= 0f)
             {
                 continue;
             }
@@ -1421,11 +1459,13 @@ public partial class BattleManager : Node3D
     {
         var pendingDamage = new Dictionary<Formation, float>();
         var pendingBuildingDamage = new Dictionary<Building, float>();
+        var pendingNestDamage = new Dictionary<Nest, float>();
 
         foreach (var attacker in _formations)
         {
             attacker.CurrentTarget = null;
             attacker.CurrentBuildingTarget = null;
+            attacker.CurrentNestTarget = null;
             if (!attacker.IsCombatant || attacker.Hp <= 0f)
             {
                 continue;
@@ -1443,18 +1483,31 @@ public partial class BattleManager : Node3D
             }
 
             var building = FindBuildingTarget(attacker);
-            if (building == null)
+            if (building != null)
+            {
+                attacker.CurrentBuildingTarget = building;
+                float buildingMultiplier = PenetrationMultiplier(
+                    EffectivePenetrationAgainstBuilding(attacker, building.Coord),
+                    building.Armor);
+                pendingBuildingDamage[building] =
+                    pendingBuildingDamage.GetValueOrDefault(building)
+                    + attacker.BaseDps * attacker.AttackScale * buildingMultiplier
+                    * attacker.CaptainDamageMultiplier * dt;
+                continue;
+            }
+
+            var nest = FindNestTarget(attacker);
+            if (nest == null)
             {
                 continue;
             }
 
-            attacker.CurrentBuildingTarget = building;
-            float buildingMultiplier = PenetrationMultiplier(
-                EffectivePenetrationAgainstBuilding(attacker, building.Coord),
-                building.Armor);
-            pendingBuildingDamage[building] =
-                pendingBuildingDamage.GetValueOrDefault(building)
-                + attacker.BaseDps * attacker.AttackScale * buildingMultiplier
+            attacker.CurrentNestTarget = nest;
+            float nestMultiplier = PenetrationMultiplier(
+                EffectivePenetrationAgainstBuilding(attacker, nest.Coord), 6f);
+            pendingNestDamage[nest] =
+                pendingNestDamage.GetValueOrDefault(nest)
+                + attacker.BaseDps * attacker.AttackScale * nestMultiplier
                 * attacker.CaptainDamageMultiplier * dt;
         }
 
@@ -1477,6 +1530,45 @@ public partial class BattleManager : Node3D
         {
             _buildings.Damage(pair.Key, pair.Value);
         }
+
+        foreach (var pair in pendingNestDamage)
+        {
+            _nests.Damage(pair.Key, pair.Value);
+        }
+    }
+
+    private Nest FindNestTarget(Formation attacker)
+    {
+        if (_nests == null)
+        {
+            return null;
+        }
+
+        Nest best = null;
+        int bestDistance = int.MaxValue;
+        foreach (var nest in _nests.Nests)
+        {
+            if (!nest.IsAlive)
+            {
+                continue;
+            }
+
+            int distance = attacker.Coord.DistanceTo(nest.Coord);
+            if (distance > attacker.Range || distance >= bestDistance)
+            {
+                continue;
+            }
+
+            if (!IsVisibleTo(attacker.Faction, nest.Coord))
+            {
+                continue;
+            }
+
+            best = nest;
+            bestDistance = distance;
+        }
+
+        return best;
     }
 
     private Building FindBuildingTarget(Formation attacker)
@@ -1604,7 +1696,7 @@ public partial class BattleManager : Node3D
         formation.Replenishing = false;
         formation.ReplenishTruck = null;
 
-        if (formation.IsInfantry && formation.LastAliveUnits > 0)
+        if (formation.IsPlayer && formation.IsInfantry && formation.LastAliveUnits > 0)
         {
             _buildings.RegisterInfantryLoss(formation.LastAliveUnits);
             formation.LastAliveUnits = 0;
@@ -1672,6 +1764,7 @@ public partial class BattleManager : Node3D
 
             var target = attacker.CurrentTarget;
             var building = attacker.CurrentBuildingTarget;
+            var nest = attacker.CurrentNestTarget;
             Vector3 to;
             if (target != null && target.Hp > 0f)
             {
@@ -1692,6 +1785,16 @@ public partial class BattleManager : Node3D
                 }
 
                 to = building.GlobalPosition + new Vector3(0f, building.BeamHeight, 0f);
+            }
+            else if (nest != null && nest.IsAlive)
+            {
+                if (!IsVisibleTo(Faction.Player, nest.Coord))
+                {
+                    beam.Visible = false;
+                    continue;
+                }
+
+                to = nest.GlobalPosition + new Vector3(0f, nest.BeamHeight, 0f);
             }
             else
             {
@@ -1862,9 +1965,11 @@ public partial class BattleManager : Node3D
             ? $"交战中 → {formation.CurrentTarget.DisplayName}"
             : formation.CurrentBuildingTarget != null
                 ? $"攻击建筑 → {formation.CurrentBuildingTarget.DisplayName}"
-                : formation.IsMoving
-                    ? "移动中"
-                    : "待命";
+                : formation.CurrentNestTarget != null
+                    ? $"清剿巢穴 → {formation.CurrentNestTarget.DisplayName}"
+                    : formation.IsMoving
+                        ? "移动中"
+                        : "待命";
         string captainLine = formation.Captain == null
             ? string.Empty
             : $"\n队长: {formation.Captain.Name}（{formation.Captain.OriginName}·擅长{formation.Captain.Specialty}）" +
@@ -1928,6 +2033,28 @@ public partial class BattleManager : Node3D
         }
     }
 
+    internal void OnVictory(string reason)
+    {
+        if (_gameOver)
+        {
+            return;
+        }
+
+        _gameOver = true;
+        SetSelected(null);
+        if (_victoryLabel != null)
+        {
+            _victoryLabel.Text = $"胜利\n{reason}";
+            _victoryLabel.Visible = true;
+        }
+
+        if (_messageLabel != null)
+        {
+            _messageLabel.Text = $"胜利：{reason}";
+            _messageTimer = float.MaxValue;
+        }
+    }
+
     private void UpdateBaseStats()
     {
         if (_baseStatsLabel == null || _buildings == null)
@@ -1947,7 +2074,7 @@ public partial class BattleManager : Node3D
         _baseStatsLabel.Text =
             $"基地状态\n{power}\n限电建筑 {_buildings.ShedCount} 座    断连 {_buildings.DisconnectedCount} 座\n" +
             $"人口 {_buildings.Population}    岗位 {_buildings.AssignedJobs} / {_buildings.TotalJobs}\n" +
-            $"建筑 {_buildings.Buildings.Count} 座{resources}";
+            $"建筑 {_buildings.Buildings.Count} 座{resources}\n{_victory?.StatusText()}";
     }
 
     internal void OnStorageDestroyed(Building building)
