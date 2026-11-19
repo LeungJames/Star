@@ -17,6 +17,10 @@ public partial class BattleManager : Node3D
     private static readonly HexCoord RepairSpawn = new(-2, 5);
     private static readonly HexCoord EnemyHeavySpawn = new(6, 0);
     private static readonly HexCoord EnemyLightSpawn = new(-5, -2);
+    private static readonly HexCoord CaravanSpawn = new(-6, 1);
+    private static readonly HexCoord CaravanSpawn2 = new(-5, 2);
+    private static readonly HexCoord CultSpawn = new(-2, 7);
+    private static readonly HexCoord CultSpawn2 = new(-3, 7);
 
     private readonly Dictionary<HexCoord, Formation> _ground = new();
     private readonly Dictionary<HexCoord, Formation> _air = new();
@@ -52,6 +56,8 @@ public partial class BattleManager : Node3D
     private NestManager _nests;
     private VictoryManager _victory;
     private Building _selectedBuilding;
+    private EventManager _events;
+    private bool _paused;
     private bool _gameOver;
     private Formation _markerOwner;
     private Label _infoLabel;
@@ -62,7 +68,8 @@ public partial class BattleManager : Node3D
     private Label _baseStatsLabel;
     private Label _defeatLabel;
     private float _messageTimer;
-    private EnemyCommander _enemyCommander;
+    private FactionManager _factions;
+    private readonly List<EnemyCommander> _commanders = new();
     private Label _victoryLabel;
     private PanelContainer _productionPanel;
     private Label _productionTitle;
@@ -79,6 +86,9 @@ public partial class BattleManager : Node3D
     private PanelContainer _techPanel;
     private Label _techStatusLabel;
     private readonly Dictionary<TechNode, Button> _techButtons = new();
+    private PanelContainer _diplomacyPanel;
+    private Label _diplomacyStatusLabel;
+    private readonly Dictionary<FactionId, Label> _factionLabels = new();
 
     internal WorldClock Clock { get; private set; }
 
@@ -92,6 +102,10 @@ public partial class BattleManager : Node3D
         _map.ClearAround(EnemyLightSpawn, 1);
         _map.ClearAround(InfantrySpawn, 1);
         _map.ClearAround(RepairSpawn, 1);
+        _map.ClearAround(CaravanSpawn, 1);
+        _map.ClearAround(CaravanSpawn2, 0);
+        _map.ClearAround(CultSpawn, 1);
+        _map.ClearAround(CultSpawn2, 0);
         PlaceRuins();
 
         SetupEnvironment();
@@ -120,12 +134,19 @@ public partial class BattleManager : Node3D
         _tech = new TechManager(this, _resources);
         _research = new ResearchManager(this, _tech);
         _production = new ProductionManager(this, _resources, _tech, _research);
+        _factions = new FactionManager(this, _resources, _buildings);
         BuildTechPanel();
+        BuildDiplomacyPanel();
+        _commanders.Add(new EnemyCommander(this, _factions, FactionId.Junta, EnemyHeavySpawn));
+        _commanders.Add(new EnemyCommander(this, _factions, FactionId.Caravan, new HexCoord(-6, 2)));
+        _commanders.Add(new EnemyCommander(this, _factions, FactionId.Cult, new HexCoord(2, 6)));
+        _commanders.Add(new EnemyCommander(this, _factions, FactionId.Alien, new HexCoord(4, -2)));
         _map.ClearAround(new HexCoord(-3, -4), 1);
         _nests = new NestManager(this);
         _victory = new VictoryManager(this, _buildings, _resources);
+        _events = new EventManager(this, _factions, _resources, _buildings, _nests);
+        _events.BuildUi(_uiRoot, _hudTheme);
         UpdateVisibility();
-        _enemyCommander = new EnemyCommander(this);
 
         ShowMessage("左键选中编队或建筑，右键下达移动命令");
     }
@@ -138,17 +159,28 @@ public partial class BattleManager : Node3D
         }
 
         float dt = (float)delta;
+        if (_paused)
+        {
+            UpdateMessage(dt);
+            return;
+        }
+
         Clock.Update(dt);
         _tech.Update(dt);
         _research.Update(dt);
         _nests.Update(dt);
         _victory.Update(dt);
-        _enemyCommander.Update(dt);
+        _factions.Update(dt);
+        foreach (var commander in _commanders)
+        {
+            commander.Update(dt);
+        }
         UpdateMovement(dt);
         UpdateRefuel(dt);
         _buildings.Update(dt);
         _resources.Update(dt);
         _production.Update(dt);
+        _events.Update(dt);
         UpdateReplenish(dt);
         UpdateVisibility();
         UpdateCombat(dt);
@@ -163,11 +195,21 @@ public partial class BattleManager : Node3D
             RefreshTechPanel();
         }
 
+        if (_diplomacyPanel != null && _diplomacyPanel.Visible)
+        {
+            RefreshDiplomacyPanel();
+        }
+
         UpdateMessage(dt);
     }
 
     public override void _UnhandledInput(InputEvent @event)
     {
+        if (_paused)
+        {
+            return;
+        }
+
         if (@event is InputEventKey key && key.Pressed && !key.Echo)
         {
             if (key.Keycode == Key.R)
@@ -192,6 +234,13 @@ public partial class BattleManager : Node3D
             {
                 _techPanel.Visible = !_techPanel.Visible;
                 RefreshTechPanel();
+                return;
+            }
+
+            if (key.Keycode == Key.D && _diplomacyPanel != null)
+            {
+                _diplomacyPanel.Visible = !_diplomacyPanel.Visible;
+                RefreshDiplomacyPanel();
                 return;
             }
         }
@@ -527,6 +576,7 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("异种巢穴会成长并孵化，清剿后在别处重生", theme, 15, new Color(0.95f, 0.6f, 0.72f)));
         hintBox.AddChild(MakeLabel("胜利：V 修复方舟（工程体系）  B 立信标（通信阵列）  或撑过最后一轮沙暴", theme, 15, new Color(0.62f, 0.92f, 0.66f)));
         hintBox.AddChild(MakeLabel("科技：按 T 打开三条科技线与逆向工程面板", theme, 15, new Color(0.72f, 0.88f, 0.96f)));
+        hintBox.AddChild(MakeLabel("外交：按 D 查看三方关系、交易、和谈与停战", theme, 15, new Color(0.96f, 0.84f, 0.6f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
@@ -594,6 +644,103 @@ public partial class BattleManager : Node3D
         _uiRoot = ui;
         _hudTheme = theme;
         BuildProductionPanel(ui, theme);
+    }
+
+    private void BuildDiplomacyPanel()
+    {
+        if (_uiRoot == null || _factions == null)
+        {
+            return;
+        }
+
+        _diplomacyPanel = MakePanel(_hudTheme);
+        _diplomacyPanel.CustomMinimumSize = new Vector2(470f, 0f);
+        var box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", 4);
+        _diplomacyPanel.AddChild(box);
+        box.AddChild(MakeLabel("外交与势力（D 关闭）", _hudTheme, 16, new Color(0.92f, 0.86f, 0.7f)));
+
+        foreach (var state in _factions.States)
+        {
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 4);
+            box.AddChild(row);
+
+            var label = MakeLabel(string.Empty, _hudTheme, 13, new Color(0.82f, 0.84f, 0.8f));
+            label.CustomMinimumSize = new Vector2(250f, 0f);
+            row.AddChild(label);
+            _factionLabels[state.Id] = label;
+
+            var id = state.Id;
+            var gift = new Button
+            {
+                Text = "送礼",
+                Theme = _hudTheme,
+                CustomMinimumSize = new Vector2(56f, 28f),
+                FocusMode = Control.FocusModeEnum.None,
+            };
+            gift.Pressed += () => { _factions.TryGift(id); RefreshDiplomacyPanel(); };
+            row.AddChild(gift);
+
+            var trade = new Button
+            {
+                Text = "交易",
+                Theme = _hudTheme,
+                CustomMinimumSize = new Vector2(56f, 28f),
+                FocusMode = Control.FocusModeEnum.None,
+            };
+            trade.Pressed += () => { _factions.TryTrade(id); RefreshDiplomacyPanel(); };
+            row.AddChild(trade);
+
+            var peace = new Button
+            {
+                Text = "和谈",
+                Theme = _hudTheme,
+                CustomMinimumSize = new Vector2(56f, 28f),
+                FocusMode = Control.FocusModeEnum.None,
+            };
+            peace.Pressed += () => { _factions.TryNegotiatePeace(id); RefreshDiplomacyPanel(); };
+            row.AddChild(peace);
+
+            var cede = new Button
+            {
+                Text = "让出前哨",
+                Theme = _hudTheme,
+                CustomMinimumSize = new Vector2(76f, 28f),
+                FocusMode = Control.FocusModeEnum.None,
+            };
+            cede.Pressed += () => { _factions.TryCedeOutpost(id); RefreshDiplomacyPanel(); };
+            row.AddChild(cede);
+        }
+
+        _diplomacyStatusLabel = MakeLabel(string.Empty, _hudTheme, 13, new Color(0.8f, 0.82f, 0.72f));
+        box.AddChild(_diplomacyStatusLabel);
+
+        _uiRoot.AddChild(_diplomacyPanel);
+        _diplomacyPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.Center, Control.LayoutPresetMode.Minsize);
+        _diplomacyPanel.Visible = false;
+        RefreshDiplomacyPanel();
+    }
+
+    private void RefreshDiplomacyPanel()
+    {
+        if (_diplomacyPanel == null || _factions == null)
+        {
+            return;
+        }
+
+        foreach (var pair in _factionLabels)
+        {
+            var state = _factions.Get(pair.Key);
+            if (state == null)
+            {
+                continue;
+            }
+
+            pair.Value.Text = $"{state.Name}  关系 {state.Relation}  {state.StateName}  战力 {state.Strength}";
+        }
+
+        _diplomacyStatusLabel.Text = _factions.StatusText();
     }
 
     private void BuildTechPanel()
@@ -778,8 +925,8 @@ public partial class BattleManager : Node3D
 
         ui.AddChild(_productionPanel);
         _productionPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
-        _productionPanel.OffsetTop += 294f;
-        _productionPanel.OffsetBottom += 294f;
+        _productionPanel.OffsetTop += 318f;
+        _productionPanel.OffsetBottom += 318f;
         _productionPanel.Visible = false;
     }
 
@@ -945,8 +1092,18 @@ public partial class BattleManager : Node3D
         SpawnFormation(Formation.CreateSupplyTruck(), TruckSpawn);
         SpawnFormation(Formation.CreateRepairTruck(), RepairSpawn);
         SpawnFormation(Formation.CreateLightShip(), AirSpawn);
-        SpawnFormation(Formation.CreateEnemyHeavyTank(), EnemyHeavySpawn);
-        SpawnFormation(Formation.CreateEnemyLightTank(), EnemyLightSpawn);
+        SpawnFactionUnit(Formation.CreateEnemyHeavyTank(), EnemyHeavySpawn, FactionId.Junta);
+        SpawnFactionUnit(Formation.CreateEnemyLightTank(), EnemyLightSpawn, FactionId.Junta);
+        SpawnFactionUnit(Formation.CreateEnemyLightTank(), CaravanSpawn, FactionId.Caravan);
+        SpawnFactionUnit(Formation.CreateEnemyLightTank(), CaravanSpawn2, FactionId.Caravan);
+        SpawnFactionUnit(Formation.CreateEnemyLightTank(), CultSpawn, FactionId.Cult);
+        SpawnFactionUnit(Formation.CreateEnemyLightTank(), CultSpawn2, FactionId.Cult);
+    }
+
+    private void SpawnFactionUnit(Formation formation, HexCoord coord, FactionId owner)
+    {
+        formation.Owner = owner;
+        SpawnFormation(formation, coord);
     }
 
     private void SpawnFormation(Formation formation, HexCoord coord)
@@ -1695,7 +1852,7 @@ public partial class BattleManager : Node3D
 
     private Nest FindNestTarget(Formation attacker)
     {
-        if (_nests == null)
+        if (_nests == null || attacker.Owner != FactionId.Player)
         {
             return null;
         }
@@ -1743,6 +1900,11 @@ public partial class BattleManager : Node3D
                 continue;
             }
 
+            if (!_factions.IsHostile(attacker.Owner))
+            {
+                continue;
+            }
+
             int distance = attacker.Coord.DistanceTo(building.Coord);
             if (distance > attacker.Range || distance >= bestDistance)
             {
@@ -1783,6 +1945,11 @@ public partial class BattleManager : Node3D
                 continue;
             }
 
+            if (!CanEngage(attacker, candidate))
+            {
+                continue;
+            }
+
             int distance = attacker.Coord.DistanceTo(candidate.Coord);
             if (distance > attacker.Range || distance >= bestDistance)
             {
@@ -1799,6 +1966,22 @@ public partial class BattleManager : Node3D
         }
 
         return best;
+    }
+
+    /// <summary>非交战阵营不会主动攻击玩家；玩家可以主动打破和平。</summary>
+    private bool CanEngage(Formation attacker, Formation candidate)
+    {
+        if (attacker.Owner == FactionId.Player)
+        {
+            return true;
+        }
+
+        if (candidate.Owner != FactionId.Player)
+        {
+            return false;
+        }
+
+        return _factions == null || _factions.IsHostile(attacker.Owner);
     }
 
     /// <summary>穿甲低于装甲时完全打不动；高于装甲时按差值折算。</summary>
@@ -1840,6 +2023,12 @@ public partial class BattleManager : Node3D
 
     private void DestroyFormation(Formation formation)
     {
+        _factions?.OnUnitLost(formation.Owner);
+        if (formation.Owner is FactionId.Junta or FactionId.Caravan or FactionId.Cult)
+        {
+            _factions?.ApplyRelation(formation.Owner, -10);
+        }
+
         var table = TableOf(formation);
         if (table.TryGetValue(formation.Coord, out var owner) && owner == formation)
         {
@@ -2256,6 +2445,7 @@ public partial class BattleManager : Node3D
         _baseStatsLabel.Text =
             $"基地状态\n{power}\n限电建筑 {_buildings.ShedCount} 座    断连 {_buildings.DisconnectedCount} 座\n" +
             $"人口 {_buildings.Population}    岗位 {_buildings.AssignedJobs} / {_buildings.TotalJobs}\n" +
+            $"士气 {_buildings.Morale}    床位 {_buildings.HousingCapacity}\n" +
             $"建筑 {_buildings.Buildings.Count} 座{resources}\n{_victory?.StatusText()}";
     }
 
@@ -2264,9 +2454,26 @@ public partial class BattleManager : Node3D
         _resources?.OnStorageDestroyed(building);
     }
 
+    internal void EliminateFactionUnits(FactionId owner)
+    {
+        for (int i = _formations.Count - 1; i >= 0; i--)
+        {
+            if (_formations[i].Owner == owner)
+            {
+                DestroyFormation(_formations[i]);
+            }
+        }
+    }
+
     internal void OnSampleSurveyed()
     {
-        _nests?.TriggerAggro();
+        _events?.NotifySampleTaken();
+    }
+
+    internal void SetPaused(bool paused)
+    {
+        _paused = paused;
+        ShowMessage(paused ? "重大抉择：时间暂停，请做出决定" : "时间恢复流动");
     }
 
     private void UpdateMessage(float dt)

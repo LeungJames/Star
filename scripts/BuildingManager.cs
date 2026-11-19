@@ -19,11 +19,15 @@ public class BuildingManager
 
     private bool _sandstormActive;
     private int _populationLoss;
+    private int _populationBonus;
+    private int _lastDay = 1;
 
     public Building Core { get; private set; }
     public IReadOnlyList<Building> Buildings => _buildings;
     public HexCoord? CoreCoord => Core != null ? Core.Coord : null;
     public int PopulationLoss => _populationLoss;
+    public int Morale { get; private set; } = 70;
+    public int HousingCapacity => 4 + HousingBonus + _buildings.Count(b => b.Kind == BuildingKind.Habitat && b.IsAlive) * 8;
     public int PowerOutput { get; private set; }
     public int PowerDemand { get; private set; }
     public int PowerSupplied { get; private set; }
@@ -108,6 +112,16 @@ public class BuildingManager
             return;
         }
 
+        var clock = _battle.Clock;
+        if (clock != null && clock.Day != _lastDay)
+        {
+            _lastDay = clock.Day;
+            if (Population > HousingCapacity)
+            {
+                ChangeMorale(-4, "人口超过床位，士气下降");
+            }
+        }
+
         UpdateConnectivity();
         UpdatePopulationAndStaffing();
         UpdatePower();
@@ -169,16 +183,46 @@ public class BuildingManager
             }
         }
 
-        float efficiencyMultiplier = _battle.Tech != null ? _battle.Tech.BuildingEfficiencyMultiplier : 1f;
+        float efficiencyMultiplier = (_battle.Tech != null ? _battle.Tech.BuildingEfficiencyMultiplier : 1f)
+            * MoraleEfficiency;
         foreach (var building in _buildings)
         {
             building.EfficiencyMultiplier = efficiencyMultiplier;
         }
     }
 
+    /// <summary>士气 0-100，低于 40 开始拖慢建筑效率，高于 80 有额外产出。</summary>
+    public float MoraleEfficiency => 0.8f + Morale / 250f;
+
+    public void ChangeMorale(int delta, string reason)
+    {
+        Morale = Mathf.Clamp(Morale + delta, 0, 100);
+        if (delta != 0 && !string.IsNullOrEmpty(reason))
+        {
+            _battle.ShowMessage($"{reason}（士气 {Morale}）");
+        }
+    }
+
+    public void AddPopulation(int amount)
+    {
+        _populationBonus += Mathf.Max(0, amount);
+    }
+
+    public void LosePopulation(int amount)
+    {
+        _populationLoss += Mathf.Max(0, amount);
+    }
+
+    public int HousingBonus { get; private set; }
+
+    public void AddHousing(int beds)
+    {
+        HousingBonus += Mathf.Max(0, beds);
+    }
+
     private void UpdatePopulationAndStaffing()
     {
-        Population = Mathf.Max(1, 4 + _buildings.Count(b => b.Kind == BuildingKind.Habitat && b.IsAlive) * 8 - _populationLoss);
+        Population = Mathf.Max(1, HousingCapacity + _populationBonus - _populationLoss);
         TotalJobs = _buildings.Where(b => b.IsAlive).Sum(b => b.JobSlots);
 
         int available = Population;

@@ -51,6 +51,7 @@ public partial class Formation : Node3D
     public HexCoord Coord { get; set; }
     public readonly List<HexCoord> Path = new();
     public readonly List<HexCoord> Reserved = new();
+    public new FactionId Owner { get; set; } = FactionId.Player;
     public Formation RefuelTarget { get; set; }
     public Formation CurrentTarget { get; set; }
     public Building CurrentBuildingTarget { get; set; }
@@ -330,6 +331,7 @@ public partial class Formation : Node3D
         {
             Kind = FormationKind.Alien,
             Faction = Faction.Enemy,
+            Owner = FactionId.Alien,
             DisplayName = $"异种集群 · {units} 只",
             Units = units,
             Speed = 2.4f,

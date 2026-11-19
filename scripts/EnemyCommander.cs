@@ -17,6 +17,9 @@ public class EnemyCommander
     }
 
     private readonly BattleManager _battle;
+    private readonly FactionManager _factions;
+    private readonly FactionId _owner;
+    private readonly HexCoord _home;
     private readonly List<Formation> _intel = new();
 
     private State _state = State.Scouting;
@@ -24,9 +27,12 @@ public class EnemyCommander
     private float _stateTime;
     private float _moveCooldown;
 
-    public EnemyCommander(BattleManager battle)
+    public EnemyCommander(BattleManager battle, FactionManager factions, FactionId owner, HexCoord home)
     {
         _battle = battle;
+        _factions = factions;
+        _owner = owner;
+        _home = home;
     }
 
     public void Update(float dt)
@@ -34,7 +40,13 @@ public class EnemyCommander
         _stateTime += dt;
         _moveCooldown = Mathf.Max(0f, _moveCooldown - dt);
 
-        var enemies = _battle.Formations.Where(f => !f.IsPlayer && f.Hp > 0f).ToList();
+        var faction = _factions.Get(_owner);
+        if (faction is { Eliminated: true })
+        {
+            return;
+        }
+
+        var enemies = _battle.Formations.Where(f => f.Owner == _owner && f.Hp > 0f).ToList();
         if (enemies.Count == 0)
         {
             return;
@@ -53,11 +65,17 @@ public class EnemyCommander
 
         if (_state == State.Sheltering)
         {
-            _battle.ShowMessage("沙暴结束，敌方重新展开");
+            _battle.ShowMessage($"{FactionName}重新展开");
             ChangeState(State.Scouting);
         }
 
-        var scout = enemies.FirstOrDefault(f => f.Kind == FormationKind.LightTank);
+        if (!_factions.IsHostile(_owner))
+        {
+            UpdatePeacetime(enemies);
+            return;
+        }
+
+        var scout = enemies.FirstOrDefault(f => f.Kind == FormationKind.LightTank) ?? enemies[0];
         switch (_state)
         {
             case State.Scouting:
@@ -76,6 +94,48 @@ public class EnemyCommander
 
         RefreshIntel();
     }
+
+    /// <summary>未开战时只在被事件要求时派轻型单位侦察，看到布局后回报关系变化。</summary>
+    private void UpdatePeacetime(List<Formation> enemies)
+    {
+        var faction = _factions.Get(_owner);
+        if (faction is { Eliminated: true })
+        {
+            return;
+        }
+
+        bool scoutRequested = _factions.ConsumeScoutRequest(_owner);
+        if (!scoutRequested && faction != null && faction.Relation > -20)
+        {
+            _target = null;
+            _state = State.Scouting;
+            return;
+        }
+
+        var scout = enemies.FirstOrDefault(f => f.Kind == FormationKind.LightTank);
+        if (scout == null || scout.IsMoving || _moveCooldown > 0f)
+        {
+            return;
+        }
+
+        var seen = VisiblePlayers();
+        if (seen.Count > 0)
+        {
+            _battle.ShowMessage($"{FactionName}侦察了你的防线，判断防守薄弱方向");
+            _factions.ApplyRelation(_owner, -4);
+            _moveCooldown = 3f;
+            return;
+        }
+
+        var nearest = AlivePlayers().OrderBy(p => scout.Coord.DistanceTo(p.Coord)).FirstOrDefault();
+        HexCoord? destination = nearest?.Coord ?? _battle.PlayerCoreCoord;
+        if (destination.HasValue && TryMoveNear(scout, destination.Value, 2, scout.VisionRadius))
+        {
+            _moveCooldown = 2f;
+        }
+    }
+
+    private string FactionName => _factions.Get(_owner)?.Name ?? "敌方";
 
     private void UpdateScouting(Formation scout)
     {
@@ -195,9 +255,7 @@ public class EnemyCommander
                 continue;
             }
 
-            var home = enemy.Kind == FormationKind.HeavyTank
-                ? new HexCoord(6, 0)
-                : new HexCoord(-5, -2);
+            var home = _home;
             if (TryMoveNear(enemy, home, 0, 1))
             {
                 _moveCooldown = 2f;
@@ -215,7 +273,7 @@ public class EnemyCommander
 
         if (!scout.IsMoving && _moveCooldown <= 0f)
         {
-            var home = new HexCoord(5, 1);
+            var home = _home;
             if (TryMoveNear(scout, home, 0, 1))
             {
                 _moveCooldown = 2f;
