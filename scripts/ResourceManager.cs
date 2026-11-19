@@ -15,10 +15,10 @@ public enum ResourceKind
 /// <summary>五种资源的库存、仓储上限、自动回收、每日食物消耗与仓储摧毁掉落。</summary>
 public class ResourceManager
 {
-    private const float StorageCapacity = 150f;
-    private const float OutpostCapacity = 60f;
-    private const float FoodPerPersonPerDay = 1f;
-    private const float WasteMessageInterval = 8f;
+    private const float StorageCapacity = GameBalance.StorageCapacity;
+    private const float OutpostCapacity = GameBalance.OutpostCapacity;
+    private const float FoodPerPersonPerDay = GameBalance.FoodPerPersonPerDay;
+    private const float WasteMessageInterval = GameBalance.WasteMessageInterval;
 
     private readonly BattleManager _battle;
     private readonly BuildingManager _buildings;
@@ -34,11 +34,11 @@ public class ResourceManager
         _buildings = buildings;
         _lastDay = battle.Clock?.Day ?? 1;
 
-        _amount[(int)ResourceKind.Scrap] = 60f;
-        _amount[(int)ResourceKind.Fuel] = 40f;
-        _amount[(int)ResourceKind.Food] = 50f;
-        _amount[(int)ResourceKind.Medicine] = 10f;
-        _amount[(int)ResourceKind.Data] = 2f;
+        _amount[(int)ResourceKind.Scrap] = GameBalance.StartScrap;
+        _amount[(int)ResourceKind.Fuel] = GameBalance.StartFuel;
+        _amount[(int)ResourceKind.Food] = GameBalance.StartFood;
+        _amount[(int)ResourceKind.Medicine] = GameBalance.StartMedicine;
+        _amount[(int)ResourceKind.Data] = GameBalance.StartData;
 
         BuildNodes();
     }
@@ -161,7 +161,8 @@ public class ResourceManager
         }
 
         _lastDay = clock.Day;
-        float need = _buildings.Population * FoodPerPersonPerDay;
+        float need = _buildings.Population * FoodPerPersonPerDay
+            * (_battle?.CaptainFoodMultiplier ?? 1f);
         float got = Consume(ResourceKind.Food, need);
         if (got < need - 0.01f)
         {

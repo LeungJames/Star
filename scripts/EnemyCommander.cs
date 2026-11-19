@@ -105,7 +105,7 @@ public class EnemyCommander
         }
 
         bool scoutRequested = _factions.ConsumeScoutRequest(_owner);
-        if (!scoutRequested && faction != null && faction.Relation > -20)
+        if (!scoutRequested && faction != null && faction.Relation > GameBalance.ScoutRelationThreshold)
         {
             _target = null;
             _state = State.Scouting;

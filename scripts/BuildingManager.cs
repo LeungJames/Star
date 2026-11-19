@@ -7,9 +7,9 @@ namespace Star;
 /// <summary>基地建筑：连通判定、电力/人力结算、维修、沙暴损伤与摧毁。</summary>
 public class BuildingManager
 {
-    private const float RepairPerSecond = 8f;
-    private const float SandstormDamagePerSecond = 2f;
-    private const float DisconnectedDecayPerSecond = 0.4f;
+    private const float RepairPerSecond = GameBalance.RepairPerSecond;
+    private const float SandstormDamagePerSecond = GameBalance.SandstormDamagePerSecond;
+    private const float DisconnectedDecayPerSecond = GameBalance.DisconnectedDecayPerSecond;
 
     private readonly BattleManager _battle;
     private readonly HexMap _map;
@@ -26,8 +26,9 @@ public class BuildingManager
     public IReadOnlyList<Building> Buildings => _buildings;
     public HexCoord? CoreCoord => Core != null ? Core.Coord : null;
     public int PopulationLoss => _populationLoss;
-    public int Morale { get; private set; } = 70;
-    public int HousingCapacity => 4 + HousingBonus + _buildings.Count(b => b.Kind == BuildingKind.Habitat && b.IsAlive) * 8;
+    public int Morale { get; private set; } = GameBalance.StartMorale;
+    public int HousingCapacity => GameBalance.BaseHousing + HousingBonus
+        + _buildings.Count(b => b.Kind == BuildingKind.Habitat && b.IsAlive) * GameBalance.HabitatBeds;
     public int PowerOutput { get; private set; }
     public int PowerDemand { get; private set; }
     public int PowerSupplied { get; private set; }
@@ -118,7 +119,13 @@ public class BuildingManager
             _lastDay = clock.Day;
             if (Population > HousingCapacity)
             {
-                ChangeMorale(-4, "人口超过床位，士气下降");
+                ChangeMorale(-GameBalance.OverpopMoralePenalty, "人口超过床位，士气下降");
+            }
+
+            int captainMorale = _battle?.GarrisonMoraleBonus ?? 0;
+            if (captainMorale > 0)
+            {
+                ChangeMorale(captainMorale, "驻防队长安抚民心");
             }
         }
 
@@ -192,7 +199,10 @@ public class BuildingManager
     }
 
     /// <summary>士气 0-100，低于 40 开始拖慢建筑效率，高于 80 有额外产出。</summary>
-    public float MoraleEfficiency => 0.8f + Morale / 250f;
+    public float MoraleEfficiency => Mathf.Clamp(
+        GameBalance.MoraleEfficiencyBase + Morale / GameBalance.MoraleEfficiencyScale,
+        GameBalance.MoraleEfficiencyMin,
+        GameBalance.MoraleEfficiencyMax);
 
     public void ChangeMorale(int delta, string reason)
     {
@@ -307,7 +317,8 @@ public class BuildingManager
             formation.RepairTargetBuilding = best;
             if (best != null)
             {
-                best.Hp = Mathf.Min(best.MaxHp, best.Hp + RepairPerSecond * dt);
+                best.Hp = Mathf.Min(best.MaxHp,
+                    best.Hp + RepairPerSecond * formation.CaptainRepairMultiplier * dt);
             }
         }
     }

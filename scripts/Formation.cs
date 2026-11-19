@@ -58,6 +58,7 @@ public partial class Formation : Node3D
     public Nest CurrentNestTarget { get; set; }
     public Building RepairTargetBuilding { get; set; }
     public Captain Captain { get; set; }
+    public bool Garrisoned { get; set; }
     public bool Replenishing { get; set; }
     public Formation ReplenishTruck { get; set; }
     public int LastAliveUnits { get; set; }
@@ -79,7 +80,24 @@ public partial class Formation : Node3D
     public bool IsPlayer => Faction == Faction.Player;
 
     public float CaptainDamageMultiplier =>
-        Captain == null ? 1f : Captain.Matches(Kind) ? 1.15f : 1.075f;
+        1f + (Captain?.Value(CaptainSkill.BallisticCalibration, Kind) ?? 0f);
+
+    public float CaptainDamageReduction =>
+        Garrisoned ? Captain?.Value(CaptainSkill.GarrisonArmor, Kind) ?? 0f : 0f;
+
+    public float CaptainReplenishMultiplier =>
+        1f + (Captain?.Value(CaptainSkill.FrontlineReplenish, Kind) ?? 0f)
+        + (Captain?.Value(CaptainSkill.LocalRecruit, Kind) ?? 0f);
+
+    public float CaptainFuelMultiplier =>
+        Mathf.Max(0.5f, 1f - (Captain?.Value(CaptainSkill.FuelEfficiency, Kind) ?? 0f));
+
+    public float CaptainRepairMultiplier =>
+        1f + (Captain?.Value(CaptainSkill.FieldRepair, Kind) ?? 0f);
+
+    public int CaptainVisionBonus =>
+        Mathf.RoundToInt((Captain?.Value(CaptainSkill.BattleVision, Kind) ?? 0f)
+            + (Captain?.Value(CaptainSkill.SensorArray, Kind) ?? 0f));
 
     /// <summary>按耐久比例折算的存活单位数，至少保留 1 个。</summary>
     public int AliveUnits => Hp <= 0f ? 0 : Mathf.Max(1, Mathf.CeilToInt(Units * Hp / MaxHp));

@@ -154,7 +154,7 @@ public class EventManager
         }
 
         _checkTimer += dt;
-        if (_checkTimer < 0.5f)
+        if (_checkTimer < GameBalance.EventCheckInterval)
         {
             return;
         }
@@ -193,8 +193,8 @@ public class EventManager
         }
 
         _activeMinor = gameEvent;
-        _minorTimer = 25f;
-        _minorTitle.Text = $"{gameEvent.Title}（25 秒后默认处理）";
+        _minorTimer = GameBalance.MinorEventTimeoutSeconds;
+        _minorTitle.Text = $"{gameEvent.Title}（{GameBalance.MinorEventTimeoutSeconds:F0} 秒后默认处理）";
         _minorText.Text = gameEvent.Text;
         for (int i = 0; i < _minorButtons.Length; i++)
         {
@@ -264,14 +264,14 @@ public class EventManager
             Title = "军政府索要物资",
             Text = "军政府的使者带着一队装甲车停在防线外：交出物资，或者准备好打一仗。",
             Major = true,
-            CanTrigger = () => _battle.Clock.Day >= 2,
+            CanTrigger = () => _battle.Clock.Day >= GameBalance.EventDemandDay,
         }, options: new[]
         {
             ("缴纳废铁 60、燃料 20", (Action)(() =>
             {
-                Consume(ResourceKind.Scrap, 60f);
-                Consume(ResourceKind.Fuel, 20f);
-                _factions.ApplyRelation(FactionId.Junta, 15);
+                Consume(ResourceKind.Scrap, GameBalance.DemandScrapCost);
+                Consume(ResourceKind.Fuel, GameBalance.DemandFuelCost);
+                _factions.ApplyRelation(FactionId.Junta, GameBalance.PeaceRelationGain);
             })),
             ("拒绝", (Action)(() =>
             {
@@ -280,7 +280,7 @@ public class EventManager
             })),
             ("讨价还价", (Action)(() =>
             {
-                Consume(ResourceKind.Scrap, 30f);
+                Consume(ResourceKind.Scrap, GameBalance.DemandBargainScrapCost);
                 _factions.ApplyRelation(FactionId.Junta, -5);
                 _buildings.ChangeMorale(-2, "被军政府记恨");
             })),
@@ -293,8 +293,8 @@ public class EventManager
             Text = "配给员报告，仓库里的食物撑不了几天了。",
             Major = true,
             Repeatable = true,
-            RepeatSeconds = 90f,
-            CanTrigger = () => _resources.Get(ResourceKind.Food) < 15f,
+            RepeatSeconds = GameBalance.EventFoodCooldown,
+            CanTrigger = () => _resources.Get(ResourceKind.Food) < GameBalance.FoodLowThreshold,
         }, options: new[]
         {
             ("削减配给", (Action)(() =>
@@ -303,14 +303,14 @@ public class EventManager
             })),
             ("向商队采购", (Action)(() =>
             {
-                Consume(ResourceKind.Scrap, 50f);
-                _resources.Add(ResourceKind.Food, 40f);
-                _factions.ApplyRelation(FactionId.Caravan, 5);
+                Consume(ResourceKind.Scrap, GameBalance.FoodPurchaseScrapCost);
+                _resources.Add(ResourceKind.Food, GameBalance.FoodPurchaseGain);
+                _factions.ApplyRelation(FactionId.Caravan, GameBalance.TradeCultRelationGain);
             })),
             ("动用药品换粮", (Action)(() =>
             {
-                Consume(ResourceKind.Medicine, 10f);
-                _resources.Add(ResourceKind.Food, 20f);
+                Consume(ResourceKind.Medicine, GameBalance.FoodMedicineCost);
+                _resources.Add(ResourceKind.Food, GameBalance.FoodMedicineGain);
                 _buildings.ChangeMorale(3, "勉强填饱肚子");
             })),
         });
@@ -321,7 +321,7 @@ public class EventManager
             Title = "失联冷冻舱信号",
             Text = "侦察队捕捉到方舟号冷冻舱的微弱信标，救回来的是人手，也是更多要吃饭的嘴。",
             Major = true,
-            CanTrigger = () => _battle.Clock.Day >= 3,
+            CanTrigger = () => _battle.Clock.Day >= GameBalance.EventCryopodDay,
         }, options: new[]
         {
             ("派队解救", (Action)(() =>
@@ -347,7 +347,7 @@ public class EventManager
             Title = "流浪者求收留",
             Text = "一群带着病容的流浪者请求进入基地。收留他们是人手，也是负担。",
             Major = true,
-            CanTrigger = () => _battle.Clock.Day >= 4,
+            CanTrigger = () => _battle.Clock.Day >= GameBalance.EventRefugeeDay,
         }, options: new[]
         {
             ("全部收留", (Action)(() =>
@@ -403,7 +403,7 @@ public class EventManager
             Major = false,
             Text = "预警响起：沙暴将在短时间内抵达。",
             Repeatable = true,
-            RepeatSeconds = 5f,
+            RepeatSeconds = GameBalance.EventStormCooldown,
             CanTrigger = () => _battle.Clock.IsWarning && _battle.Clock.StormCount > _lastStormWarning,
         }, options: new[]
         {
@@ -414,7 +414,7 @@ public class EventManager
             })),
             ("提前收工避风（燃料 10）", (Action)(() =>
             {
-                Consume(ResourceKind.Fuel, 10f);
+                Consume(ResourceKind.Fuel, GameBalance.ShelterFuelCost);
                 _buildings.ChangeMorale(6, "全员避风，士气稳定");
             })),
             ("照常运转", (Action)(() =>
@@ -430,15 +430,15 @@ public class EventManager
             Major = false,
             Text = "一支商队在防区外停下，表示愿意做点买卖。",
             Repeatable = true,
-            RepeatSeconds = 60f,
-            CanTrigger = () => _battle.Clock.Day >= 2,
+            RepeatSeconds = GameBalance.EventCaravanCooldown,
+            CanTrigger = () => _battle.Clock.Day >= GameBalance.EventCaravanDay,
         }, options: new[]
         {
             ("交易（废铁 30）", (Action)(() =>
             {
-                Consume(ResourceKind.Scrap, 30f);
-                _resources.Add(ResourceKind.Data, 20f);
-                _factions.ApplyRelation(FactionId.Caravan, 3);
+                Consume(ResourceKind.Scrap, GameBalance.CaravanEventScrapCost);
+                _resources.Add(ResourceKind.Data, GameBalance.CaravanEventDataGain);
+                _factions.ApplyRelation(FactionId.Caravan, GameBalance.TradeJuntaRelationGain);
             })),
             ("驱离", (Action)(() =>
             {
@@ -454,8 +454,8 @@ public class EventManager
             Major = false,
             Text = "教团的传教士在围墙外宣讲旧文明的启示。",
             Repeatable = true,
-            RepeatSeconds = 75f,
-            CanTrigger = () => _battle.Clock.Day >= 4,
+            RepeatSeconds = GameBalance.EventCultCooldown,
+            CanTrigger = () => _battle.Clock.Day >= GameBalance.EventCultDay,
         }, options: new[]
         {
             ("接受", (Action)(() =>
@@ -478,7 +478,7 @@ public class EventManager
             Major = false,
             Text = "床位不够了，走廊里都挤满了人。",
             Repeatable = true,
-            RepeatSeconds = 60f,
+            RepeatSeconds = GameBalance.EventOverpopCooldown,
             CanTrigger = () => _buildings.Population > _buildings.HousingCapacity,
         }, options: new[]
         {

@@ -63,9 +63,9 @@ public class ResearchManager
     private readonly int[] _samples = new int[3];
     private readonly System.Random _rng = new(31173);
 
-    private const float SampleSeconds = 6f;
-    private const float ResearchSeconds = 18f;
-    private const int MaxVehicles = 4;
+    private const float SampleSeconds = GameBalance.SampleSeconds;
+    private const float ResearchSeconds = GameBalance.ResearchSeconds;
+    private const int MaxVehicles = GameBalance.MaxResearchVehicles;
 
     private TechLine? _researchingLine;
     private float _researchElapsed;
@@ -251,7 +251,7 @@ public class ResearchManager
             return;
         }
 
-        _researchElapsed += dt;
+        _researchElapsed += dt * _battle.CaptainResearchMultiplier;
         if (_researchElapsed < CurrentResearchSeconds)
         {
             return;
@@ -261,7 +261,7 @@ public class ResearchManager
         _researchingLine = null;
         _researchElapsed = 0f;
 
-        float success = 0.6f + _tech.ResearchSuccessBonus;
+        float success = GameBalance.ResearchBaseSuccess + _tech.ResearchSuccessBonus;
         if (_rng.NextDouble() > success)
         {
             _battle.ShowMessage($"{TechManager.LineName(line)}样本研究失败，样本已消耗");

@@ -6,7 +6,7 @@ namespace Star;
 /// <summary>程序生成的六角格地图，只负责范围、阻挡地形与坐标换算。</summary>
 public class HexMap
 {
-    public const float HexSize = 1.6f;
+    public const float HexSize = GameBalance.HexSize;
 
     private static readonly HexCoord Origin = new(0, 0);
 

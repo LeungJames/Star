@@ -113,27 +113,29 @@ public class TechManager
             }
         }
 
-        return Mathf.Ceil(node.BaseCost * (1f + 0.55f * own) * (1f + 0.25f * other));
+        return Mathf.Ceil(node.BaseCost * (1f + GameBalance.SoftCostOwn * own)
+            * (1f + GameBalance.SoftCostOther * other));
     }
 
     public float ResearchSeconds(TechNode node)
     {
-        return 14f + 3f * Count(node.Line);
+        return GameBalance.TechResearchBaseSeconds + GameBalance.TechResearchPerLineSeconds * Count(node.Line);
     }
 
     private int CivCount => Count(TechLine.Civilization);
 
-    private float CivMultiplier => 1f + 0.08f * CivCount;
+    private float CivMultiplier => 1f + GameBalance.CivBonusPerTech * CivCount;
 
     public float DamageMultiplier =>
-        (1f + (IsUnlocked("M1") ? 0.15f * CivMultiplier : 0f))
+        (1f + (IsUnlocked("M1") ? GameBalance.MilitaryDamageBonus * CivMultiplier : 0f))
         * (_unstable.Contains(UnstableKind.OverloadWeapon) ? 1.25f : 1f);
 
     public int VisionBonus => IsUnlocked("M2") ? Mathf.Max(1, Mathf.RoundToInt(CivMultiplier)) : 0;
 
-    public float PowerOutputMultiplier => 1f + (IsUnlocked("S1") ? 0.25f * CivMultiplier : 0f);
+    public float PowerOutputMultiplier => 1f + (IsUnlocked("S1") ? GameBalance.PowerOutputBonus * CivMultiplier : 0f);
 
-    public float BuildingEfficiencyMultiplier => 1f + (IsUnlocked("S2") ? 0.15f * CivMultiplier : 0f);
+    public float BuildingEfficiencyMultiplier =>
+        1f + (IsUnlocked("S2") ? GameBalance.BuildingEfficiencyBonus * CivMultiplier : 0f);
 
     public float FuelMultiplier
     {
@@ -142,7 +144,7 @@ public class TechManager
             float value = 1f;
             if (IsUnlocked("S3"))
             {
-                value *= Mathf.Max(0.5f, 1f - 0.3f * CivMultiplier);
+                value *= Mathf.Max(0.5f, 1f - GameBalance.SurvivalFuelReduction * CivMultiplier);
             }
 
             if (_unstable.Contains(UnstableKind.OverloadWeapon))
@@ -163,7 +165,7 @@ public class TechManager
 
     public bool HasExperimentalArmor => _unstable.Contains(UnstableKind.ExperimentalArmor);
 
-    public float StorageMultiplier => 1f + (IsUnlocked("S4") ? 0.25f * CivMultiplier : 0f);
+    public float StorageMultiplier => 1f + (IsUnlocked("S4") ? GameBalance.StorageBonus * CivMultiplier : 0f);
 
     public bool HeavyTankUnlocked => IsUnlocked("M3");
 
@@ -173,14 +175,20 @@ public class TechManager
 
     public bool ArkUnlocked => IsUnlocked("S5");
 
-    public float ProductionTimeMultiplier => IsUnlocked("C2") ? 0.85f : 1f;
+    public float ProductionTimeMultiplier =>
+        IsUnlocked("C2") ? 1f - GameBalance.ProductionTimeReduction : 1f;
 
-    public float ReplenishMultiplier => IsUnlocked("C3") ? 1f + 0.25f * CivMultiplier : 1f;
+    public float ReplenishMultiplier =>
+        IsUnlocked("C3") ? 1f + GameBalance.ReplenishBonus * CivMultiplier : 1f;
 
     public float ResearchSuccessBonus =>
-        (IsUnlocked("C1") ? 0.15f : 0f) + (IsUnlocked("C4") ? 0.1f : 0f);
+        (IsUnlocked("C1") ? GameBalance.ResearchSuccessBonusC1 : 0f)
+        + (IsUnlocked("C4") ? GameBalance.ResearchSuccessBonusC4 : 0f);
 
-    public float SampleResearchTimeMultiplier => IsUnlocked("C4") ? 0.75f : 1f;
+    public float SampleResearchTimeMultiplier =>
+        IsUnlocked("C4") ? GameBalance.SampleResearchTimeMultiplier : 1f;
+
+    public float CaptainXpMultiplier => 1f + GameBalance.CivCaptainGrowthBonus * CivCount;
 
     public bool TryStart(TechNode node)
     {

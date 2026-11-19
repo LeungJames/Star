@@ -5,9 +5,9 @@ namespace Star;
 /// <summary>斜俯视相机：WASD 平移、滚轮缩放、中键拖动平移。</summary>
 public partial class CameraRig : Camera3D
 {
-    private const float MinDistance = 18f;
-    private const float MaxDistance = 72f;
-    private const float PitchDegrees = -56f;
+    private const float MinDistance = GameBalance.CameraMinDistance;
+    private const float MaxDistance = GameBalance.CameraMaxDistance;
+    private const float PitchDegrees = GameBalance.CameraPitchDegrees;
 
     public Vector3 Focus = Vector3.Zero;
 

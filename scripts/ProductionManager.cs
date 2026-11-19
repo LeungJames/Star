@@ -17,9 +17,9 @@ public class ProductionOrder
 /// <summary>兵营/坦克厂/机库的下单、排队、按效率推进与下发编队。</summary>
 public class ProductionManager
 {
-    public const int MaxFormations = 8;
-    public const int MaxAirFormations = 3;
-    private const int MaxQueue = 3;
+    public const int MaxFormations = GameBalance.MaxFormations;
+    public const int MaxAirFormations = GameBalance.MaxAirFormations;
+    private const int MaxQueue = GameBalance.MaxQueue;
 
     private readonly BattleManager _battle;
     private readonly ResourceManager _resources;
@@ -31,6 +31,7 @@ public class ProductionManager
         Captain.Soldier(),
         Captain.Scientist(),
         Captain.Worker(),
+        Captain.Civilian(),
     };
 
     public ProductionManager(BattleManager battle, ResourceManager resources, TechManager tech, ResearchManager research)
@@ -68,29 +69,9 @@ public class ProductionManager
         _ => "编队",
     };
 
-    private static float ScrapPerUnit(FormationKind kind) => kind switch
-    {
-        FormationKind.Infantry => 8f,
-        FormationKind.LightTank => 18f,
-        FormationKind.MediumTank => 26f,
-        FormationKind.HeavyTank => 36f,
-        FormationKind.LightShip => 30f,
-        FormationKind.MediumShip => 42f,
-        FormationKind.SurveyVehicle => 30f,
-        _ => 20f,
-    };
+    private static float ScrapPerUnit(FormationKind kind) => GameBalance.ScrapPerUnit(kind);
 
-    private static float SecondsPerUnit(FormationKind kind) => kind switch
-    {
-        FormationKind.Infantry => 1.6f,
-        FormationKind.LightTank => 2.6f,
-        FormationKind.MediumTank => 3.2f,
-        FormationKind.HeavyTank => 4f,
-        FormationKind.LightShip => 3.4f,
-        FormationKind.MediumShip => 4.2f,
-        FormationKind.SurveyVehicle => 8f,
-        _ => 3f,
-    };
+    private static float SecondsPerUnit(FormationKind kind) => GameBalance.SecondsPerUnit(kind);
 
     public bool IsSupported(Building building) =>
         building != null && building.IsProduction && ModelsFor(building.Kind).Length > 0;
@@ -174,7 +155,7 @@ public class ProductionManager
         }
 
         float cost = kind == FormationKind.SurveyVehicle
-            ? 30f
+            ? GameBalance.SurveyVehicleCost
             : ScrapPerUnit(kind) * units;
         if (_resources.Get(ResourceKind.Scrap) < cost - 0.01f)
         {
@@ -195,7 +176,7 @@ public class ProductionManager
             Units = units,
             Captain = captain,
             TotalTime = kind == FormationKind.SurveyVehicle
-                ? 6f
+                ? GameBalance.SurveyVehicleSeconds
                 : SecondsPerUnit(kind) * units,
             Cost = cost,
         });
@@ -236,7 +217,8 @@ public class ProductionManager
                 continue;
             }
 
-            current.Elapsed += dt * efficiency / _tech.ProductionTimeMultiplier;
+            current.Elapsed += dt * efficiency / _tech.ProductionTimeMultiplier
+                * _battle.CaptainProductionMultiplier;
             if (current.Elapsed < current.TotalTime)
             {
                 continue;

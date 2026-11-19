@@ -70,10 +70,10 @@ public partial class Nest : Node3D
 
 public class NestManager
 {
-    private const float GrowthInterval = 30f;
-    private const float SpawnInterval = 16f;
-    private const float RespawnDelay = 40f;
-    private const int MaxEnemyFormations = 8;
+    private const float GrowthInterval = GameBalance.NestGrowthInterval;
+    private const float SpawnInterval = GameBalance.NestSpawnInterval;
+    private const float RespawnDelay = GameBalance.NestRespawnDelay;
+    private const int MaxEnemyFormations = GameBalance.MaxEnemyFormations;
 
     private readonly BattleManager _battle;
     private readonly List<Nest> _nests = new();
@@ -258,10 +258,10 @@ public class NestManager
 /// <summary>三条胜利条件并存：修复方舟号、立起信标、撑过最后一轮沙暴。</summary>
 public class VictoryManager
 {
-    public const int FinalStormCount = 6;
-    private const float ArkWorkSeconds = 50f;
-    private const float BeaconWorkSeconds = 40f;
-    private const float ArkTruckRange = 2f;
+    public const int FinalStormCount = GameBalance.FinalStormCount;
+    private const float ArkWorkSeconds = GameBalance.ArkWorkSeconds;
+    private const float BeaconWorkSeconds = GameBalance.BeaconWorkSeconds;
+    private const float ArkTruckRange = GameBalance.ArkTruckRange;
 
     private readonly BattleManager _battle;
     private readonly BuildingManager _buildings;

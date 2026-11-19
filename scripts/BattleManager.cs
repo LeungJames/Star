@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text;
 using Godot;
 
 namespace Star;
@@ -6,9 +7,9 @@ namespace Star;
 /// <summary>原型主控：地图、编队、选择与移动、占格、燃油补给、持续交战与战争迷雾。</summary>
 public partial class BattleManager : Node3D
 {
-    private const int MapRadius = 7;
-    private const ulong MapSeed = 20261117UL;
-    private const float RefuelRate = 28f;
+    private const int MapRadius = GameBalance.MapRadius;
+    private const ulong MapSeed = GameBalance.MapSeed;
+    private const float RefuelRate = GameBalance.RefuelRate;
 
     private static readonly HexCoord TankSpawn = new(0, 2);
     private static readonly HexCoord TruckSpawn = new(-3, 3);
@@ -76,7 +77,7 @@ public partial class BattleManager : Node3D
     private Label _productionStatus;
     private readonly Button[] _modelButtons = new Button[3];
     private readonly Button[] _sizeButtons = new Button[4];
-    private readonly Button[] _captainButtons = new Button[4];
+    private readonly Button[] _captainButtons = new Button[5];
     private Building _uiBuilding;
     private FormationKind _orderKind;
     private int _orderUnits = 3;
@@ -89,6 +90,10 @@ public partial class BattleManager : Node3D
     private PanelContainer _diplomacyPanel;
     private Label _diplomacyStatusLabel;
     private readonly Dictionary<FactionId, Label> _factionLabels = new();
+    private PanelContainer _captainPanel;
+    private readonly List<(Captain Captain, Label Header, Button[] Buttons)> _captainRows = new();
+    private PanelContainer _debugPanel;
+    private Label _debugLabel;
 
     internal WorldClock Clock { get; private set; }
 
@@ -137,6 +142,8 @@ public partial class BattleManager : Node3D
         _factions = new FactionManager(this, _resources, _buildings);
         BuildTechPanel();
         BuildDiplomacyPanel();
+        BuildCaptainPanel();
+        BuildDebugPanel();
         _commanders.Add(new EnemyCommander(this, _factions, FactionId.Junta, EnemyHeavySpawn));
         _commanders.Add(new EnemyCommander(this, _factions, FactionId.Caravan, new HexCoord(-6, 2)));
         _commanders.Add(new EnemyCommander(this, _factions, FactionId.Cult, new HexCoord(2, 6)));
@@ -181,6 +188,7 @@ public partial class BattleManager : Node3D
         _resources.Update(dt);
         _production.Update(dt);
         _events.Update(dt);
+        UpdateCaptains(dt);
         UpdateReplenish(dt);
         UpdateVisibility();
         UpdateCombat(dt);
@@ -198,6 +206,16 @@ public partial class BattleManager : Node3D
         if (_diplomacyPanel != null && _diplomacyPanel.Visible)
         {
             RefreshDiplomacyPanel();
+        }
+
+        if (_captainPanel != null && _captainPanel.Visible)
+        {
+            RefreshCaptainPanel();
+        }
+
+        if (_debugPanel != null && _debugPanel.Visible)
+        {
+            RefreshDebugPanel();
         }
 
         UpdateMessage(dt);
@@ -241,6 +259,20 @@ public partial class BattleManager : Node3D
             {
                 _diplomacyPanel.Visible = !_diplomacyPanel.Visible;
                 RefreshDiplomacyPanel();
+                return;
+            }
+
+            if (key.Keycode == Key.C && _captainPanel != null)
+            {
+                _captainPanel.Visible = !_captainPanel.Visible;
+                RefreshCaptainPanel();
+                return;
+            }
+
+            if (key.Keycode == Key.F1 && _debugPanel != null)
+            {
+                _debugPanel.Visible = !_debugPanel.Visible;
+                RefreshDebugPanel();
                 return;
             }
         }
@@ -413,7 +445,8 @@ public partial class BattleManager : Node3D
     {
         int penalty = Clock != null && Clock.IsStorm ? WorldClock.StormVisionPenalty : 0;
         int tech = formation.IsPlayer && _tech != null ? _tech.VisionBonus : 0;
-        return Mathf.Max(1, formation.VisionRadius - penalty + tech);
+        int captain = formation.IsPlayer ? formation.CaptainVisionBonus : 0;
+        return Mathf.Max(1, formation.VisionRadius - penalty + tech + captain);
     }
 
     private float WeatherSpeedMultiplier => Clock.IsStorm ? WorldClock.StormSpeedMultiplier : 1f;
@@ -577,6 +610,8 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("胜利：V 修复方舟（工程体系）  B 立信标（通信阵列）  或撑过最后一轮沙暴", theme, 15, new Color(0.62f, 0.92f, 0.66f)));
         hintBox.AddChild(MakeLabel("科技：按 T 打开三条科技线与逆向工程面板", theme, 15, new Color(0.72f, 0.88f, 0.96f)));
         hintBox.AddChild(MakeLabel("外交：按 D 查看三方关系、交易、和谈与停战", theme, 15, new Color(0.96f, 0.84f, 0.6f)));
+        hintBox.AddChild(MakeLabel("队长：按 C 分配技能点；战斗与驻防都会积累经验", theme, 15, new Color(0.88f, 0.76f, 0.95f)));
+        hintBox.AddChild(MakeLabel("调试：按 F1 查看关键平衡数值与实时状态", theme, 15, new Color(0.7f, 0.72f, 0.7f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
@@ -741,6 +776,169 @@ public partial class BattleManager : Node3D
         }
 
         _diplomacyStatusLabel.Text = _factions.StatusText();
+    }
+
+    private void BuildCaptainPanel()
+    {
+        if (_uiRoot == null || _production == null)
+        {
+            return;
+        }
+
+        _captainPanel = MakePanel(_hudTheme);
+        _captainPanel.CustomMinimumSize = new Vector2(600f, 0f);
+        var box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", 6);
+        _captainPanel.AddChild(box);
+        box.AddChild(MakeLabel("队长成长（C 关闭）· 战斗与驻防都会积累经验",
+            _hudTheme, 16, new Color(0.88f, 0.76f, 0.95f)));
+
+        foreach (var captain in _production.Captains)
+        {
+            var block = new VBoxContainer();
+            block.AddThemeConstantOverride("separation", 2);
+            box.AddChild(block);
+
+            var header = MakeLabel(string.Empty, _hudTheme, 13, new Color(0.85f, 0.86f, 0.8f));
+            block.AddChild(header);
+
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 4);
+            block.AddChild(row);
+
+            var skillDefs = captain.SkillLine;
+            var buttons = new Button[skillDefs.Count];
+            for (int i = 0; i < skillDefs.Count; i++)
+            {
+                var def = skillDefs[i];
+                var button = new Button
+                {
+                    Theme = _hudTheme,
+                    CustomMinimumSize = new Vector2(190f, 34f),
+                    FocusMode = Control.FocusModeEnum.None,
+                    TooltipText = def.Description,
+                };
+                button.Pressed += () =>
+                {
+                    if (captain.Learn(def.Skill))
+                    {
+                        ShowMessage($"{captain.Name} 学会 {def.Name}：{def.Description}");
+                    }
+
+                    RefreshCaptainPanel();
+                };
+                row.AddChild(button);
+                buttons[i] = button;
+            }
+
+            _captainRows.Add((captain, header, buttons));
+        }
+
+        _uiRoot.AddChild(_captainPanel);
+        _captainPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.Center, Control.LayoutPresetMode.Minsize);
+        _captainPanel.Visible = false;
+        RefreshCaptainPanel();
+    }
+
+    private void RefreshCaptainPanel()
+    {
+        if (_captainPanel == null || _production == null)
+        {
+            return;
+        }
+
+        foreach (var row in _captainRows)
+        {
+            var captain = row.Captain;
+            string assignment = "待命";
+            if (!captain.IsAlive)
+            {
+                assignment = "已阵亡";
+            }
+            else
+            {
+                foreach (var formation in _formations)
+                {
+                    if (formation.Captain == captain && formation.Hp > 0f)
+                    {
+                        assignment = $"编队 {formation.DisplayName}";
+                        break;
+                    }
+                }
+            }
+
+            row.Header.Text =
+                $"{captain.Name} · {captain.OriginName}（擅长{captain.Specialty}）  {captain.LevelText}" +
+                $"  技能点 {captain.SkillPoints}  {assignment}";
+
+            var defs = captain.SkillLine;
+            for (int i = 0; i < row.Buttons.Length && i < defs.Count; i++)
+            {
+                var def = defs[i];
+                var button = row.Buttons[i];
+                bool learned = captain.Has(def.Skill);
+                button.Text = learned ? $"✓ {def.Name}" : $"{def.Name}（Lv{def.RequiredLevel}）";
+                button.Disabled = learned || !captain.CanLearn(def.Skill);
+                button.Modulate = learned ? new Color(0.7f, 0.95f, 0.7f) : Colors.White;
+            }
+        }
+    }
+
+    private void BuildDebugPanel()
+    {
+        if (_uiRoot == null)
+        {
+            return;
+        }
+
+        _debugPanel = MakePanel(_hudTheme);
+        _debugPanel.CustomMinimumSize = new Vector2(620f, 0f);
+        var box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", 4);
+        _debugPanel.AddChild(box);
+        box.AddChild(MakeLabel("关键数值（F1 关闭）", _hudTheme, 16, new Color(0.78f, 0.82f, 0.86f)));
+        _debugLabel = MakeLabel(string.Empty, _hudTheme, 12, new Color(0.8f, 0.82f, 0.78f));
+        _debugLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _debugLabel.CustomMinimumSize = new Vector2(600f, 0f);
+        box.AddChild(_debugLabel);
+
+        _uiRoot.AddChild(_debugPanel);
+        _debugPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.Center, Control.LayoutPresetMode.Minsize);
+        _debugPanel.Visible = false;
+        RefreshDebugPanel();
+    }
+
+    private void RefreshDebugPanel()
+    {
+        if (_debugLabel == null)
+        {
+            return;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine(GameBalance.Summary());
+        builder.AppendLine("【实时状态】");
+        builder.AppendLine($"第 {Clock.Day} 日  {(Clock.IsStorm ? "沙暴中" : Clock.IsWarning ? "沙暴预警" : "正常")}" +
+                           $"  沙暴轮次 {Clock.StormCount}");
+        builder.AppendLine($"士气 {_buildings.Morale}  人口 {_buildings.Population}/{_buildings.HousingCapacity}" +
+                           $"  岗位 {_buildings.AssignedJobs}/{_buildings.TotalJobs}");
+        builder.AppendLine($"资源 铁 {_resources.Get(ResourceKind.Scrap):F0}  油 {_resources.Get(ResourceKind.Fuel):F0}" +
+                           $"  食 {_resources.Get(ResourceKind.Food):F0}  药 {_resources.Get(ResourceKind.Medicine):F0}" +
+                           $"  数据 {_resources.Get(ResourceKind.Data):F0}");
+        foreach (var state in _factions.States)
+        {
+            builder.AppendLine($"{state.Name} 关系 {state.Relation}  {state.StateName}  战力 {state.Strength}");
+        }
+
+        foreach (var captain in _production.Captains)
+        {
+            string status = !captain.IsAlive ? "阵亡" : captain.InUse ? "在编" : "待命";
+            builder.AppendLine($"队长 {captain.Name} Lv.{captain.Level}" +
+                               $"{(captain.MaxLevel ? string.Empty : $" XP {captain.Xp:F0}/{captain.XpToNext:F0}")}" +
+                               $"  技能点 {captain.SkillPoints}  {status}");
+        }
+
+        _debugLabel.Text = builder.ToString().TrimEnd();
     }
 
     private void BuildTechPanel()
@@ -1505,7 +1703,7 @@ public partial class BattleManager : Node3D
                 formation.Fuel = Mathf.Max(
                     0f,
                     formation.Fuel - formation.FuelDrainPerSecond * WeatherFuelMultiplier
-                    * (formation.IsPlayer ? _tech.FuelMultiplier : 1f) * dt);
+                    * (formation.IsPlayer ? _tech.FuelMultiplier * formation.CaptainFuelMultiplier : 1f) * dt);
                 if (formation.Fuel <= 0f && formation.Path.Count > 0)
                 {
                     StopForNoFuel(formation);
@@ -1633,7 +1831,8 @@ public partial class BattleManager : Node3D
             }
 
             float rate = (formation.ReplenishTruck != null ? 4f : 12f)
-                * (_tech != null ? _tech.ReplenishMultiplier : 1f);
+                * (_tech != null ? _tech.ReplenishMultiplier : 1f)
+                * formation.CaptainReplenishMultiplier;
             if (baseBuilding != null)
             {
                 rate *= Mathf.Max(0.25f, baseBuilding.Efficiency);
@@ -1656,6 +1855,105 @@ public partial class BattleManager : Node3D
             formation.Hp = Mathf.Min(formation.MaxHp, formation.Hp + heal);
         }
     }
+
+    /// <summary>队长经验：战斗按伤害结算，驻防按时间结算，后方同样能培养。</summary>
+    private void UpdateCaptains(float dt)
+    {
+        HexCoord? core = _buildings?.CoreCoord;
+        float growth = _tech?.CaptainXpMultiplier ?? 1f;
+        foreach (var formation in _formations)
+        {
+            if (!formation.IsPlayer || formation.Hp <= 0f)
+            {
+                formation.Garrisoned = false;
+                continue;
+            }
+
+            bool nearCore = core.HasValue
+                && formation.Coord.DistanceTo(core.Value) <= GameBalance.CaptainGarrisonRadius;
+            bool nearBuilding = false;
+            if (!nearCore && _buildings != null)
+            {
+                foreach (var building in _buildings.Buildings)
+                {
+                    if (!building.IsAlive || !building.IsPlayer || !building.Connected)
+                    {
+                        continue;
+                    }
+
+                    if (formation.Coord.DistanceTo(building.Coord) <= 1)
+                    {
+                        nearBuilding = true;
+                        break;
+                    }
+                }
+            }
+
+            formation.Garrisoned = !formation.IsMoving && (nearCore || nearBuilding);
+            if (!formation.Garrisoned || formation.Captain == null || !formation.Captain.IsAlive)
+            {
+                continue;
+            }
+
+            int levels = formation.Captain.AddXp(
+                GameBalance.CaptainGarrisonXpPerSecond * dt * growth);
+            if (levels > 0)
+            {
+                NotifyCaptainLevel(formation.Captain, levels);
+            }
+        }
+    }
+
+    private void AwardXp(Captain captain, float amount)
+    {
+        if (captain == null || !captain.IsAlive || amount <= 0f)
+        {
+            return;
+        }
+
+        int levels = captain.AddXp(amount * (_tech?.CaptainXpMultiplier ?? 1f));
+        if (levels > 0)
+        {
+            NotifyCaptainLevel(captain, levels);
+        }
+    }
+
+    private void NotifyCaptainLevel(Captain captain, int levels)
+    {
+        ShowMessage($"队长 {captain.Name} 升到 Lv.{captain.Level}，获得 {levels} 技能点（按 C 加点）");
+        if (_captainPanel != null && _captainPanel.Visible)
+        {
+            RefreshCaptainPanel();
+        }
+    }
+
+    /// <summary>驻防队长提供的基地加成，供生产、研究、士气与配给读取。</summary>
+    internal float GarrisonCaptainValue(CaptainSkill skill)
+    {
+        float total = 0f;
+        foreach (var formation in _formations)
+        {
+            if (formation.IsPlayer && formation.Hp > 0f && formation.Garrisoned
+                && formation.Captain is { IsAlive: true })
+            {
+                total += formation.Captain.ValueGarrison(skill);
+            }
+        }
+
+        return total;
+    }
+
+    internal int GarrisonMoraleBonus =>
+        Mathf.FloorToInt(GarrisonCaptainValue(CaptainSkill.CivilMorale));
+
+    internal float CaptainFoodMultiplier =>
+        Mathf.Max(0.5f, 1f - GarrisonCaptainValue(CaptainSkill.Rationing));
+
+    internal float CaptainProductionMultiplier =>
+        1f + GarrisonCaptainValue(CaptainSkill.ProductionAssist);
+
+    internal float CaptainResearchMultiplier =>
+        1f + GarrisonCaptainValue(CaptainSkill.ResearchAssist);
 
     private void TryStartReplenish(Formation formation)
     {
@@ -1782,7 +2080,9 @@ public partial class BattleManager : Node3D
                 float multiplier = PenetrationMultiplier(penetration, armor);
                 float dps = attacker.BaseDps * attacker.AttackScale * multiplier
                     * attacker.CaptainDamageMultiplier * PlayerDamageMultiplier(attacker);
-                pendingDamage[target] = pendingDamage.GetValueOrDefault(target) + dps * dt;
+                float applied = dps * dt * (1f - target.CaptainDamageReduction);
+                pendingDamage[target] = pendingDamage.GetValueOrDefault(target) + applied;
+                AwardXp(attacker.Captain, applied * GameBalance.CaptainXpPerDamageDealt);
                 continue;
             }
 
@@ -1793,10 +2093,11 @@ public partial class BattleManager : Node3D
                 float buildingMultiplier = PenetrationMultiplier(
                     EffectivePenetrationAgainstBuilding(attacker, building.Coord),
                     building.Armor);
-                pendingBuildingDamage[building] =
-                    pendingBuildingDamage.GetValueOrDefault(building)
-                    + attacker.BaseDps * attacker.AttackScale * buildingMultiplier
+                float buildingDamage = attacker.BaseDps * attacker.AttackScale * buildingMultiplier
                     * attacker.CaptainDamageMultiplier * PlayerDamageMultiplier(attacker) * dt;
+                pendingBuildingDamage[building] =
+                    pendingBuildingDamage.GetValueOrDefault(building) + buildingDamage;
+                AwardXp(attacker.Captain, buildingDamage * GameBalance.CaptainXpPerDamageDealt);
                 continue;
             }
 
@@ -1809,10 +2110,10 @@ public partial class BattleManager : Node3D
             attacker.CurrentNestTarget = nest;
             float nestMultiplier = PenetrationMultiplier(
                 EffectivePenetrationAgainstBuilding(attacker, nest.Coord), 6f);
-            pendingNestDamage[nest] =
-                pendingNestDamage.GetValueOrDefault(nest)
-                + attacker.BaseDps * attacker.AttackScale * nestMultiplier
+            float nestDamage = attacker.BaseDps * attacker.AttackScale * nestMultiplier
                 * attacker.CaptainDamageMultiplier * PlayerDamageMultiplier(attacker) * dt;
+            pendingNestDamage[nest] = pendingNestDamage.GetValueOrDefault(nest) + nestDamage;
+            AwardXp(attacker.Captain, nestDamage * GameBalance.CaptainXpPerDamageDealt);
         }
 
         foreach (var pair in pendingDamage)
@@ -1823,6 +2124,7 @@ public partial class BattleManager : Node3D
                 continue;
             }
 
+            AwardXp(target.Captain, pair.Value * GameBalance.CaptainXpPerDamageTaken);
             target.Hp = Mathf.Max(0f, target.Hp - pair.Value);
             if (target.Hp <= 0f)
             {
@@ -2026,7 +2328,7 @@ public partial class BattleManager : Node3D
         _factions?.OnUnitLost(formation.Owner);
         if (formation.Owner is FactionId.Junta or FactionId.Caravan or FactionId.Cult)
         {
-            _factions?.ApplyRelation(formation.Owner, -10);
+            _factions?.ApplyRelation(formation.Owner, GameBalance.KillRelationPenalty);
         }
 
         var table = TableOf(formation);
@@ -2344,7 +2646,8 @@ public partial class BattleManager : Node3D
         string captainLine = formation.Captain == null
             ? string.Empty
             : $"\n队长: {formation.Captain.Name}（{formation.Captain.OriginName}·擅长{formation.Captain.Specialty}）" +
-              $"    加成 ×{formation.CaptainDamageMultiplier:0.###}";
+              $" {formation.Captain.LevelText}    伤害 ×{formation.CaptainDamageMultiplier:0.###}" +
+              (formation.Garrisoned ? "  [驻防]" : string.Empty);
         string replenishLine = formation.CanReplenish
             ? "\n按 R 补员：贴近补给车较慢，回兵营 / 坦克厂 / 机库更快"
             : string.Empty;

@@ -9,17 +9,17 @@ namespace Star;
 /// </summary>
 public class WorldClock
 {
-    public const float DayLengthSeconds = 30f;
-    public const float StormDurationSeconds = 10f;
-    public const float WarningLeadSeconds = 8f;
-    public const float StormSpeedMultiplier = 0.6f;
-    public const float StormFuelMultiplier = 1.8f;
-    public const int StormVisionPenalty = 2;
+    public const float DayLengthSeconds = GameBalance.DayLengthSeconds;
+    public const float StormDurationSeconds = GameBalance.StormDurationSeconds;
+    public const float WarningLeadSeconds = GameBalance.WarningLeadSeconds;
+    public const float StormSpeedMultiplier = GameBalance.StormSpeedMultiplier;
+    public const float StormFuelMultiplier = GameBalance.StormFuelMultiplier;
+    public const int StormVisionPenalty = GameBalance.StormVisionPenalty;
 
-    private const float FirstStormDelaySeconds = 20f;
-    private const float InitialGapSeconds = 25f;
-    private const float GapShrinkFactor = 0.8f;
-    private const float MinGapSeconds = 10f;
+    private const float FirstStormDelaySeconds = GameBalance.FirstStormDelaySeconds;
+    private const float InitialGapSeconds = GameBalance.InitialStormGapSeconds;
+    private const float GapShrinkFactor = GameBalance.StormGapShrinkFactor;
+    private const float MinGapSeconds = GameBalance.MinStormGapSeconds;
 
     public float Elapsed { get; private set; }
     public int Day => 1 + Mathf.FloorToInt(Elapsed / DayLengthSeconds);
