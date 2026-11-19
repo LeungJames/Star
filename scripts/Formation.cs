@@ -10,6 +10,7 @@ public enum FormationKind
     Infantry,
     LightShip,
     SupplyTruck,
+    RepairTruck,
 }
 
 public enum Faction
@@ -47,11 +48,14 @@ public partial class Formation : Node3D
     public readonly List<HexCoord> Reserved = new();
     public Formation RefuelTarget { get; set; }
     public Formation CurrentTarget { get; set; }
+    public Building CurrentBuildingTarget { get; set; }
+    public Building RepairTargetBuilding { get; set; }
     public MeshInstance3D Highlight { get; private set; }
 
     public bool IsAir => Kind == FormationKind.LightShip;
     public bool IsTruck => Kind == FormationKind.SupplyTruck;
     public bool IsInfantry => Kind == FormationKind.Infantry;
+    public bool IsRepairTruck => Kind == FormationKind.RepairTruck;
     public bool IsMoving => Path.Count > 0;
     public bool IsCombatant => BaseDps > 0f && Range > 0;
     public bool IsPlayer => Faction == Faction.Player;
@@ -158,6 +162,25 @@ public partial class Formation : Node3D
         };
     }
 
+    public static Formation CreateRepairTruck()
+    {
+        return new Formation
+        {
+            Kind = FormationKind.RepairTruck,
+            Faction = Faction.Player,
+            DisplayName = "维修车",
+            Units = 1,
+            Speed = 2.6f,
+            MaxFuel = 100f,
+            Fuel = 100f,
+            FuelDrainPerSecond = 0f,
+            MaxHp = 90f,
+            Hp = 90f,
+            Armor = 20f,
+            VisionRadius = 3,
+        };
+    }
+
     public static Formation CreateEnemyHeavyTank()
     {
         return new Formation
@@ -247,6 +270,9 @@ public partial class Formation : Node3D
                 break;
             case FormationKind.SupplyTruck:
                 BuildTruck();
+                break;
+            case FormationKind.RepairTruck:
+                BuildRepairTruck();
                 break;
         }
 
@@ -397,6 +423,18 @@ public partial class Formation : Node3D
         AddBox(_body, new Vector3(0.62f, 0.28f, 1.05f), new Vector3(0f, 0.34f, 0f), chassis);
         AddBox(_body, new Vector3(0.58f, 0.3f, 0.34f), new Vector3(0f, 0.42f, -0.62f), cab);
         AddCylinder(_body, 0.22f, 0.68f, new Vector3(0f, 0.62f, 0.2f), tank);
+    }
+
+    private void BuildRepairTruck()
+    {
+        var chassis = new StandardMaterial3D { AlbedoColor = new Color(0.7f, 0.6f, 0.2f), Roughness = 0.9f };
+        var cab = new StandardMaterial3D { AlbedoColor = new Color(0.82f, 0.75f, 0.4f), Roughness = 0.8f };
+        var tool = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.58f, 0.6f), Metallic = 0.5f, Roughness = 0.4f };
+
+        AddBox(_body, new Vector3(0.62f, 0.28f, 1.05f), new Vector3(0f, 0.34f, 0f), chassis);
+        AddBox(_body, new Vector3(0.58f, 0.3f, 0.34f), new Vector3(0f, 0.42f, -0.62f), cab);
+        AddBox(_body, new Vector3(0.18f, 0.18f, 0.5f), new Vector3(0f, 0.78f, 0.15f), tool);
+        AddBox(_body, new Vector3(0.4f, 0.1f, 0.1f), new Vector3(0f, 1.0f, 0.35f), tool);
     }
 
     private static void AddBox(Node3D parent, Vector3 size, Vector3 position, Material material)

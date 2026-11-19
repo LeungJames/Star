@@ -14,6 +14,7 @@ public partial class BattleManager : Node3D
     private static readonly HexCoord TruckSpawn = new(-3, 3);
     private static readonly HexCoord AirSpawn = new(2, -3);
     private static readonly HexCoord InfantrySpawn = new(-1, 0);
+    private static readonly HexCoord RepairSpawn = new(-2, 5);
     private static readonly HexCoord EnemyHeavySpawn = new(6, 0);
     private static readonly HexCoord EnemyLightSpawn = new(-5, -2);
 
@@ -26,6 +27,7 @@ public partial class BattleManager : Node3D
     private readonly HashSet<HexCoord> _visibleToPlayer = new();
     private readonly HashSet<HexCoord> _visibleToEnemy = new();
     private readonly Dictionary<HexCoord, MeshInstance3D> _fogCells = new();
+    private readonly Dictionary<HexCoord, MeshInstance3D> _tiles = new();
     private readonly HashSet<Formation> _revealedEnemies = new();
 
     private HexMap _map;
@@ -40,12 +42,19 @@ public partial class BattleManager : Node3D
     private StandardMaterial3D _beamMaterial;
     private StandardMaterial3D _fogUnexplored;
     private StandardMaterial3D _fogDim;
+    private CylinderMesh _freeHexMesh;
+    private StandardMaterial3D _ruinMaterial;
+    private BuildingManager _buildings;
+    private Building _selectedBuilding;
+    private bool _gameOver;
     private Formation _markerOwner;
     private Label _infoLabel;
     private Label _messageLabel;
     private Label _dayLabel;
     private Label _stormStateLabel;
     private Label _stormCycleLabel;
+    private Label _baseStatsLabel;
+    private Label _defeatLabel;
     private float _messageTimer;
     private EnemyCommander _enemyCommander;
 
@@ -60,9 +69,12 @@ public partial class BattleManager : Node3D
         _map.ClearAround(EnemyHeavySpawn, 1);
         _map.ClearAround(EnemyLightSpawn, 1);
         _map.ClearAround(InfantrySpawn, 1);
+        _map.ClearAround(RepairSpawn, 1);
         PlaceRuins();
 
         SetupEnvironment();
+        _buildings = new BuildingManager(this, _map);
+        _buildings.BuildInitialBase();
         BuildMapVisual();
         BuildFog();
         SetupCamera();
@@ -85,22 +97,29 @@ public partial class BattleManager : Node3D
         UpdateVisibility();
         _enemyCommander = new EnemyCommander(this);
 
-        ShowMessage("左键选中编队，右键下达移动命令");
+        ShowMessage("左键选中编队或建筑，右键下达移动命令");
     }
 
     public override void _Process(double delta)
     {
+        if (_gameOver)
+        {
+            return;
+        }
+
         float dt = (float)delta;
         Clock.Update(dt);
         _enemyCommander.Update(dt);
         UpdateMovement(dt);
         UpdateRefuel(dt);
+        _buildings.Update(dt);
         UpdateVisibility();
         UpdateCombat(dt);
         UpdateBeams();
         UpdateCursor();
         UpdateHud();
         UpdateClockHud();
+        UpdateBaseStats();
         UpdateMessage(dt);
     }
 
@@ -180,6 +199,9 @@ public partial class BattleManager : Node3D
             RadialSegments = 6,
         };
 
+        _freeHexMesh = freeMesh;
+        _ruinMaterial = ruinMaterial;
+
         var root = new Node3D { Name = "Map" };
         AddChild(root);
 
@@ -195,6 +217,23 @@ public partial class BattleManager : Node3D
                 RotationDegrees = new Vector3(0f, 0f, 0f),
             };
             root.AddChild(tile);
+            _tiles[coord] = tile;
+        }
+    }
+
+    /// <summary>建筑被摧毁后，把该格切换成可通行、可作掩体的废墟。</summary>
+    internal void MakeTileRuins(HexCoord coord)
+    {
+        if (_freeHexMesh != null && _tiles.TryGetValue(coord, out var tile))
+        {
+            tile.Mesh = _freeHexMesh;
+            tile.MaterialOverride = _ruinMaterial;
+            tile.Position = _map.ToWorld(coord) + new Vector3(0f, 0.1f, 0f);
+        }
+
+        if (_fogCells.TryGetValue(coord, out var fog))
+        {
+            fog.Position = _map.ToWorld(coord) + new Vector3(0f, 0.215f, 0f);
         }
     }
 
@@ -410,6 +449,7 @@ public partial class BattleManager : Node3D
         hintBox.AddChild(MakeLabel("编队进入射程后自动持续开火", theme, 15, new Color(0.95f, 0.78f, 0.55f)));
         hintBox.AddChild(MakeLabel("迷雾：未探索区域被遮蔽，敌人进入视野才会现身", theme, 15, new Color(0.62f, 0.78f, 0.95f)));
         hintBox.AddChild(MakeLabel("沙暴季：视野下降、油耗上升、移动变慢", theme, 15, new Color(0.95f, 0.7f, 0.45f)));
+        hintBox.AddChild(MakeLabel("建筑：维修车贴住受损建筑即可就地维修", theme, 15, new Color(0.72f, 0.9f, 0.7f)));
         ui.AddChild(hintPanel);
         hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
 
@@ -446,6 +486,24 @@ public partial class BattleManager : Node3D
         ui.AddChild(clockPanel);
         clockPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight, Control.LayoutPresetMode.Minsize, 16);
         clockPanel.GrowHorizontal = Control.GrowDirection.Begin;
+
+        var basePanel = MakePanel(theme);
+        _baseStatsLabel = MakeLabel(string.Empty, theme, 14, new Color(0.78f, 0.86f, 0.78f));
+        _baseStatsLabel.CustomMinimumSize = new Vector2(230f, 0f);
+        basePanel.AddChild(_baseStatsLabel);
+        ui.AddChild(basePanel);
+        basePanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomRight, Control.LayoutPresetMode.Minsize, 16);
+        basePanel.GrowHorizontal = Control.GrowDirection.Begin;
+        basePanel.GrowVertical = Control.GrowDirection.Begin;
+
+        _defeatLabel = MakeLabel("核心塔被摧毁\n方舟计划失败", theme, 44, new Color(1f, 0.36f, 0.3f));
+        _defeatLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        _defeatLabel.VerticalAlignment = VerticalAlignment.Center;
+        _defeatLabel.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.9f));
+        _defeatLabel.AddThemeConstantOverride("outline_size", 8);
+        _defeatLabel.Visible = false;
+        ui.AddChild(_defeatLabel);
+        _defeatLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
     }
 
     private static PanelContainer MakePanel(Theme theme)
@@ -483,6 +541,7 @@ public partial class BattleManager : Node3D
         SpawnFormation(Formation.CreateLightTank(), TankSpawn);
         SpawnFormation(Formation.CreateInfantry(), InfantrySpawn);
         SpawnFormation(Formation.CreateSupplyTruck(), TruckSpawn);
+        SpawnFormation(Formation.CreateRepairTruck(), RepairSpawn);
         SpawnFormation(Formation.CreateLightShip(), AirSpawn);
         SpawnFormation(Formation.CreateEnemyHeavyTank(), EnemyHeavySpawn);
         SpawnFormation(Formation.CreateEnemyLightTank(), EnemyLightSpawn);
@@ -518,6 +577,12 @@ public partial class BattleManager : Node3D
         if (picked == null && TryGroundPoint(screenPosition, out var world))
         {
             var coord = _map.ToCoord(world);
+            if (_buildings != null && _buildings.At(coord) is { } building)
+            {
+                SetSelectedBuilding(building);
+                return;
+            }
+
             if (_ground.TryGetValue(coord, out var ground) && ground.IsPlayer)
             {
                 picked = ground;
@@ -541,6 +606,29 @@ public partial class BattleManager : Node3D
                 f.Highlight.Visible = f == _selected;
             }
         }
+
+        if (_selectedBuilding != null)
+        {
+            _selectedBuilding.SetSelected(false);
+            _selectedBuilding = null;
+        }
+    }
+
+    private void SetSelectedBuilding(Building building)
+    {
+        if (_selectedBuilding == building)
+        {
+            return;
+        }
+
+        if (_selectedBuilding != null)
+        {
+            _selectedBuilding.SetSelected(false);
+        }
+
+        SetSelected(null);
+        _selectedBuilding = building;
+        building?.SetSelected(true);
     }
 
     private void CommandAt(Vector2 screenPosition)
@@ -583,6 +671,16 @@ public partial class BattleManager : Node3D
             if (playerOrder)
             {
                 ShowMessage("目标格是阻挡地形，无法进入");
+            }
+
+            return false;
+        }
+
+        if (!formation.IsAir && _buildings != null && _buildings.IsOccupied(goal))
+        {
+            if (playerOrder)
+            {
+                ShowMessage("目标格被建筑占用");
             }
 
             return false;
@@ -656,6 +754,11 @@ public partial class BattleManager : Node3D
         }
 
         if (!formation.IsAir && _map.IsBlocked(coord))
+        {
+            return true;
+        }
+
+        if (!formation.IsAir && _buildings != null && _buildings.IsOccupied(coord))
         {
             return true;
         }
@@ -877,10 +980,12 @@ public partial class BattleManager : Node3D
     private void UpdateCombat(float dt)
     {
         var pendingDamage = new Dictionary<Formation, float>();
+        var pendingBuildingDamage = new Dictionary<Building, float>();
 
         foreach (var attacker in _formations)
         {
             attacker.CurrentTarget = null;
+            attacker.CurrentBuildingTarget = null;
             if (!attacker.IsCombatant || attacker.Hp <= 0f)
             {
                 continue;
@@ -888,15 +993,28 @@ public partial class BattleManager : Node3D
 
             var target = FindTarget(attacker);
             attacker.CurrentTarget = target;
-            if (target == null)
+            if (target != null)
+            {
+                float penetration = EffectivePenetration(attacker, target);
+                float multiplier = PenetrationMultiplier(penetration, target.Armor);
+                float dps = attacker.BaseDps * attacker.AttackScale * multiplier;
+                pendingDamage[target] = pendingDamage.GetValueOrDefault(target) + dps * dt;
+                continue;
+            }
+
+            var building = FindBuildingTarget(attacker);
+            if (building == null)
             {
                 continue;
             }
 
-            float penetration = EffectivePenetration(attacker, target);
-            float multiplier = PenetrationMultiplier(penetration, target.Armor);
-            float dps = attacker.BaseDps * attacker.AttackScale * multiplier;
-            pendingDamage[target] = pendingDamage.GetValueOrDefault(target) + dps * dt;
+            attacker.CurrentBuildingTarget = building;
+            float buildingMultiplier = PenetrationMultiplier(
+                EffectivePenetrationAgainstBuilding(attacker, building.Coord),
+                building.Armor);
+            pendingBuildingDamage[building] =
+                pendingBuildingDamage.GetValueOrDefault(building)
+                + attacker.BaseDps * attacker.AttackScale * buildingMultiplier * dt;
         }
 
         foreach (var pair in pendingDamage)
@@ -913,6 +1031,56 @@ public partial class BattleManager : Node3D
                 DestroyFormation(target);
             }
         }
+
+        foreach (var pair in pendingBuildingDamage)
+        {
+            _buildings.Damage(pair.Key, pair.Value);
+        }
+    }
+
+    private Building FindBuildingTarget(Formation attacker)
+    {
+        if (_buildings == null)
+        {
+            return null;
+        }
+
+        Building best = null;
+        int bestDistance = int.MaxValue;
+        foreach (var building in _buildings.Buildings)
+        {
+            if (!building.IsAlive || building.Faction == attacker.Faction)
+            {
+                continue;
+            }
+
+            int distance = attacker.Coord.DistanceTo(building.Coord);
+            if (distance > attacker.Range || distance >= bestDistance)
+            {
+                continue;
+            }
+
+            if (!IsVisibleTo(attacker.Faction, building.Coord))
+            {
+                continue;
+            }
+
+            best = building;
+            bestDistance = distance;
+        }
+
+        return best;
+    }
+
+    private float EffectivePenetrationAgainstBuilding(Formation attacker, HexCoord buildingCoord)
+    {
+        float penetration = attacker.Penetration;
+        if (attacker.Coord.DistanceTo(buildingCoord) <= 1)
+        {
+            penetration *= attacker.CloseRangePenMultiplier;
+        }
+
+        return penetration;
     }
 
     private Formation FindTarget(Formation attacker)
@@ -1033,17 +1201,42 @@ public partial class BattleManager : Node3D
         {
             var attacker = pair.Key;
             var beam = pair.Value;
+            if (attacker.Hp <= 0f || !IsVisibleTo(Faction.Player, attacker.Coord))
+            {
+                beam.Visible = false;
+                continue;
+            }
+
             var target = attacker.CurrentTarget;
-            if (target == null || attacker.Hp <= 0f || target.Hp <= 0f
-                || !IsVisibleTo(Faction.Player, attacker.Coord)
-                || !IsVisibleTo(Faction.Player, target.Coord))
+            var building = attacker.CurrentBuildingTarget;
+            Vector3 to;
+            if (target != null && target.Hp > 0f)
+            {
+                if (!IsVisibleTo(Faction.Player, target.Coord))
+                {
+                    beam.Visible = false;
+                    continue;
+                }
+
+                to = target.GlobalPosition + new Vector3(0f, target.BeamHeight, 0f);
+            }
+            else if (building != null && building.IsAlive)
+            {
+                if (!IsVisibleTo(Faction.Player, building.Coord))
+                {
+                    beam.Visible = false;
+                    continue;
+                }
+
+                to = building.GlobalPosition + new Vector3(0f, building.BeamHeight, 0f);
+            }
+            else
             {
                 beam.Visible = false;
                 continue;
             }
 
             Vector3 from = attacker.GlobalPosition + new Vector3(0f, attacker.BeamHeight, 0f);
-            Vector3 to = target.GlobalPosition + new Vector3(0f, target.BeamHeight, 0f);
             Vector3 delta = to - from;
             float length = delta.Length();
             if (length < 0.01f)
@@ -1094,14 +1287,47 @@ public partial class BattleManager : Node3D
 
     private void UpdateHud()
     {
+        if (_selectedBuilding != null)
+        {
+            var building = _selectedBuilding;
+            string owner = building.IsPlayer ? "我方" : "敌方";
+            string powerLine = building.Kind == BuildingKind.PowerPlant
+                ? $"发电: {building.PowerOutput}（受岗位与连通影响）"
+                : building.PowerLoad > 0
+                    ? $"电力负载: {building.PowerLoad}    供电: {(building.PowerSatisfied ? "正常" : "被限电 ×0.5")}"
+                    : "无电力负载";
+            string connected = building.Connected ? "已连通" : "断连（效率 ×0.5，持续衰减）";
+            string jobs = building.JobSlots > 0
+                ? $"岗位: {building.StaffedJobs} / {building.JobSlots}"
+                : "岗位: 无需求";
+            _infoLabel.Text =
+                $"{owner}{building.DisplayName}\n耐久: {building.Hp:F0} / {building.MaxHp:F0}    护甲: {building.Armor:F0}\n" +
+                $"{connected}\n{powerLine}\n{jobs}    效率: {building.Efficiency * 100f:F0}%" +
+                $"{(building.UnderSandstorm ? "\n沙暴中：结构持续受损" : string.Empty)}";
+            return;
+        }
+
         if (_selected == null)
         {
-            _infoLabel.Text = "未选中编队\n左键点击编队进行选择";
+            _infoLabel.Text = "未选中单位\n左键点击编队或建筑进行选择";
             return;
         }
 
         var formation = _selected;
         string stormLine = Clock.IsStorm ? "\n沙暴影响：视野 -2 格，移速 ×0.6，油耗 ×1.8" : string.Empty;
+        if (formation.IsRepairTruck)
+        {
+            string task = formation.RepairTargetBuilding == null
+                ? formation.IsMoving
+                    ? "前往目标"
+                    : "待命（贴近受损建筑自动作业）"
+                : $"维修中 → {formation.RepairTargetBuilding.DisplayName}";
+            _infoLabel.Text =
+                $"维修车\n耐久: {formation.Hp:F0} / {formation.MaxHp:F0}\n状态: {task}{stormLine}\n" +
+                "维修车无武装，贴近受损建筑即可持续修复";
+            return;
+        }
+
         if (formation.IsTruck)
         {
             string task = formation.RefuelTarget == null
@@ -1163,9 +1389,11 @@ public partial class BattleManager : Node3D
             : "地面编队：受地形与编队占格限制";
         string status = formation.CurrentTarget != null
             ? $"交战中 → {formation.CurrentTarget.DisplayName}"
-            : formation.IsMoving
-                ? "移动中"
-                : "待命";
+            : formation.CurrentBuildingTarget != null
+                ? $"攻击建筑 → {formation.CurrentBuildingTarget.DisplayName}"
+                : formation.IsMoving
+                    ? "移动中"
+                    : "待命";
         _infoLabel.Text =
             $"{formation.DisplayName}\n燃油: {formation.Fuel:F0} / {formation.MaxFuel:F0}{fuelState}\n" +
             $"{combat}状态: {status}\n{restriction}{stormLine}";
@@ -1193,9 +1421,49 @@ public partial class BattleManager : Node3D
         _stormCycleLabel.Text = $"沙暴轮次 {Clock.StormCount}    间隔 {Clock.GapSeconds:F0} 秒";
     }
 
-    /// <summary>建筑系统接入点：建筑未实现，预留沙暴受损结算。</summary>
+    /// <summary>建筑系统接入点：沙暴期间未加固建筑持续受损。</summary>
     private void OnSandstormBuildingDamage(bool active)
     {
+        _buildings?.SetSandstormActive(active);
+    }
+
+    internal HexCoord? PlayerCoreCoord => _buildings?.CoreCoord;
+
+    internal void OnCoreDestroyed()
+    {
+        if (_gameOver)
+        {
+            return;
+        }
+
+        _gameOver = true;
+        SetSelected(null);
+        if (_defeatLabel != null)
+        {
+            _defeatLabel.Visible = true;
+        }
+
+        if (_messageLabel != null)
+        {
+            _messageLabel.Text = "核心塔被摧毁，本局失败";
+            _messageTimer = float.MaxValue;
+        }
+    }
+
+    private void UpdateBaseStats()
+    {
+        if (_baseStatsLabel == null || _buildings == null)
+        {
+            return;
+        }
+
+        string power = _buildings.Core == null
+            ? "核心：已损毁"
+            : $"电力 {_buildings.PowerSupplied} / {_buildings.PowerDemand}（产能 {_buildings.PowerOutput}）";
+        _baseStatsLabel.Text =
+            $"基地状态\n{power}\n限电建筑 {_buildings.ShedCount} 座    断连 {_buildings.DisconnectedCount} 座\n" +
+            $"人口 {_buildings.Population}    岗位 {_buildings.AssignedJobs} / {_buildings.TotalJobs}\n" +
+            $"建筑 {_buildings.Buildings.Count} 座";
     }
 
     private void UpdateMessage(float dt)
@@ -1214,6 +1482,11 @@ public partial class BattleManager : Node3D
 
     internal void ShowMessage(string text)
     {
+        if (_messageLabel == null)
+        {
+            return;
+        }
+
         _messageLabel.Text = text;
         _messageTimer = 3.5f;
     }

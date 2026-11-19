@@ -96,7 +96,8 @@ public class EnemyCommander
         }
 
         var nearest = AlivePlayers().OrderBy(p => scout.Coord.DistanceTo(p.Coord)).FirstOrDefault();
-        if (nearest != null && TryMoveNear(scout, nearest.Coord, 2, scout.VisionRadius))
+        HexCoord? destination = nearest?.Coord ?? _battle.PlayerCoreCoord;
+        if (destination.HasValue && TryMoveNear(scout, destination.Value, 2, scout.VisionRadius))
         {
             _moveCooldown = 2f;
         }
@@ -114,6 +115,11 @@ public class EnemyCommander
         var target = _target;
         if (target == null)
         {
+            if (_battle.PlayerCoreCoord != null)
+            {
+                ChangeState(State.Attacking);
+            }
+
             return;
         }
 
@@ -149,8 +155,8 @@ public class EnemyCommander
     private void UpdateAttacking(List<Formation> enemies)
     {
         _target = _target != null && _target.Hp > 0f ? _target : WeakestTarget();
-        var target = _target;
-        if (target == null)
+        HexCoord? goal = _target?.Coord ?? _battle.PlayerCoreCoord;
+        if (goal == null)
         {
             return;
         }
@@ -167,7 +173,7 @@ public class EnemyCommander
                 continue;
             }
 
-            if (TryMoveNear(enemy, target.Coord, 1, Mathf.Max(1, enemy.Range)))
+            if (TryMoveNear(enemy, goal.Value, 1, Mathf.Max(1, enemy.Range)))
             {
                 _moveCooldown = 1.2f;
                 break;
