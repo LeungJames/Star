@@ -355,7 +355,7 @@ public class BuildingManager
         _buildings.Remove(building);
         _byCoord.Remove(building.Coord);
         _map.AddRuins(building.Coord);
-        _battle.MakeTileRuins(building.Coord);
+        _battle.MakeTileRuins();
 
         foreach (var formation in _battle.Formations)
         {

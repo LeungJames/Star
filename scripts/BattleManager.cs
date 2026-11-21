@@ -31,24 +31,19 @@ public partial class BattleManager : Node3D
     private readonly HashSet<HexCoord> _explored = new();
     private readonly HashSet<HexCoord> _visibleToPlayer = new();
     private readonly HashSet<HexCoord> _visibleToEnemy = new();
-    private readonly Dictionary<HexCoord, MeshInstance3D> _fogCells = new();
-    private readonly Dictionary<HexCoord, MeshInstance3D> _tiles = new();
     private readonly HashSet<Formation> _revealedEnemies = new();
 
     private HexMap _map;
+    private AshLandscape _landscape;
     private CameraRig _camera;
     private Formation _selected;
     private MeshInstance3D _cursor;
-    private StandardMaterial3D _cursorOk;
-    private StandardMaterial3D _cursorBad;
+    private ShaderMaterial _cursorOk;
+    private ShaderMaterial _cursorBad;
     private CylinderMesh _markerMesh;
     private StandardMaterial3D _markerMaterial;
     private BoxMesh _beamMesh;
     private StandardMaterial3D _beamMaterial;
-    private StandardMaterial3D _fogUnexplored;
-    private StandardMaterial3D _fogDim;
-    private CylinderMesh _freeHexMesh;
-    private StandardMaterial3D _ruinMaterial;
     private BuildingManager _buildings;
     private ResourceManager _resources;
     private TechManager _tech;
@@ -113,11 +108,10 @@ public partial class BattleManager : Node3D
         _map.ClearAround(CultSpawn2, 0);
         PlaceRuins();
 
-        SetupEnvironment();
         _buildings = new BuildingManager(this, _map);
         _buildings.BuildInitialBase();
-        BuildMapVisual();
-        BuildFog();
+        _landscape = new AshLandscape(_map, _buildings.Buildings);
+        AddChild(_landscape);
         SetupCamera();
         SetupCursor();
         SetupHud();
@@ -173,6 +167,7 @@ public partial class BattleManager : Node3D
         }
 
         Clock.Update(dt);
+        _landscape.UpdateWeather(dt, Clock.IsStorm, Clock.IsWarning);
         _tech.Update(dt);
         _research.Update(dt);
         _nests.Update(dt);
@@ -292,102 +287,8 @@ public partial class BattleManager : Node3D
         }
     }
 
-    private void SetupEnvironment()
-    {
-        var skyMaterial = new ProceduralSkyMaterial
-        {
-            SkyTopColor = new Color(0.3f, 0.36f, 0.44f),
-            SkyHorizonColor = new Color(0.63f, 0.59f, 0.5f),
-            GroundHorizonColor = new Color(0.34f, 0.32f, 0.27f),
-            GroundBottomColor = new Color(0.09f, 0.09f, 0.08f),
-        };
-        var environment = new Godot.Environment
-        {
-            BackgroundMode = Godot.Environment.BGMode.Sky,
-            Sky = new Sky { SkyMaterial = skyMaterial },
-            AmbientLightSource = Godot.Environment.AmbientSource.Sky,
-            AmbientLightEnergy = 0.85f,
-        };
-        AddChild(new WorldEnvironment { Environment = environment });
-
-        var sun = new DirectionalLight3D
-        {
-            RotationDegrees = new Vector3(-52f, -35f, 0f),
-            LightEnergy = 1.15f,
-            ShadowEnabled = true,
-        };
-        AddChild(sun);
-    }
-
-    private void BuildMapVisual()
-    {
-        var freeMaterial = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.24f, 0.3f, 0.21f),
-            Roughness = 0.95f,
-        };
-        var ruinMaterial = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.37f, 0.31f, 0.22f),
-            Roughness = 1f,
-        };
-        var blockedMaterial = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.17f, 0.16f, 0.15f),
-            Roughness = 1f,
-        };
-        var freeMesh = new CylinderMesh
-        {
-            TopRadius = HexMap.HexSize * 0.97f,
-            BottomRadius = HexMap.HexSize * 0.97f,
-            Height = 0.2f,
-            RadialSegments = 6,
-        };
-        var blockedMesh = new CylinderMesh
-        {
-            TopRadius = HexMap.HexSize * 0.97f,
-            BottomRadius = HexMap.HexSize * 0.97f,
-            Height = 1.1f,
-            RadialSegments = 6,
-        };
-
-        _freeHexMesh = freeMesh;
-        _ruinMaterial = ruinMaterial;
-
-        var root = new Node3D { Name = "Map" };
-        AddChild(root);
-
-        foreach (var coord in _map.Cells())
-        {
-            bool blocked = _map.IsBlocked(coord);
-            bool ruins = _map.IsRuins(coord);
-            var tile = new MeshInstance3D
-            {
-                Mesh = blocked ? blockedMesh : freeMesh,
-                MaterialOverride = blocked ? blockedMaterial : ruins ? ruinMaterial : freeMaterial,
-                Position = _map.ToWorld(coord) + new Vector3(0f, blocked ? 0.55f : 0.1f, 0f),
-                RotationDegrees = new Vector3(0f, 0f, 0f),
-            };
-            root.AddChild(tile);
-            _tiles[coord] = tile;
-        }
-    }
-
-    /// <summary>建筑被摧毁后，把该格切换成可通行、可作掩体的废墟。</summary>
-    internal void MakeTileRuins(HexCoord coord)
-    {
-        if (_freeHexMesh != null && _tiles.TryGetValue(coord, out var tile))
-        {
-            tile.Mesh = _freeHexMesh;
-            tile.MaterialOverride = _ruinMaterial;
-            tile.Position = _map.ToWorld(coord) + new Vector3(0f, 0.1f, 0f);
-        }
-
-        if (_fogCells.TryGetValue(coord, out var fog))
-        {
-            fog.Position = _map.ToWorld(coord) + new Vector3(0f, 0.215f, 0f);
-        }
-    }
+    internal void MakeTileRuins() =>
+        _landscape.SyncTiles(_visibleToPlayer, _explored, Clock.IsStorm);
 
     private void PlaceRuins()
     {
@@ -399,45 +300,6 @@ public partial class BattleManager : Node3D
                  })
         {
             _map.AddRuins(coord);
-        }
-    }
-
-    private void BuildFog()
-    {
-        _fogUnexplored = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.015f, 0.02f, 0.025f, 0.93f),
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-        };
-        _fogDim = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.03f, 0.05f, 0.06f, 0.48f),
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-        };
-        var mesh = new CylinderMesh
-        {
-            TopRadius = HexMap.HexSize * 0.99f,
-            BottomRadius = HexMap.HexSize * 0.99f,
-            Height = 0.02f,
-            RadialSegments = 6,
-        };
-
-        var root = new Node3D { Name = "Fog" };
-        AddChild(root);
-        foreach (var coord in _map.Cells())
-        {
-            bool blocked = _map.IsBlocked(coord);
-            var overlay = new MeshInstance3D
-            {
-                Mesh = mesh,
-                MaterialOverride = _fogUnexplored,
-                Position = _map.ToWorld(coord) + new Vector3(0f, blocked ? 1.12f : 0.215f, 0f),
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            };
-            root.AddChild(overlay);
-            _fogCells[coord] = overlay;
         }
     }
 
@@ -457,10 +319,6 @@ public partial class BattleManager : Node3D
     {
         _visibleToPlayer.Clear();
         _visibleToEnemy.Clear();
-        _fogDim.AlbedoColor = Clock.IsStorm
-            ? new Color(0.02f, 0.035f, 0.045f, 0.72f)
-            : new Color(0.03f, 0.05f, 0.06f, 0.48f);
-
         foreach (var formation in _formations)
         {
             if (formation.Hp <= 0f)
@@ -484,23 +342,15 @@ public partial class BattleManager : Node3D
             _explored.Add(cell);
         }
 
-        foreach (var pair in _fogCells)
+        _landscape.SyncTiles(_visibleToPlayer, _explored, Clock.IsStorm);
+        foreach (var ruin in _research.Ruins)
         {
-            var overlay = pair.Value;
-            if (_visibleToPlayer.Contains(pair.Key))
-            {
-                overlay.Visible = false;
-            }
-            else if (_explored.Contains(pair.Key))
-            {
-                overlay.Visible = true;
-                overlay.MaterialOverride = _fogDim;
-            }
-            else
-            {
-                overlay.Visible = true;
-                overlay.MaterialOverride = _fogUnexplored;
-            }
+            ruin.Visible = !ruin.Depleted && _explored.Contains(ruin.Coord);
+        }
+
+        foreach (var nest in _nests.Nests)
+        {
+            nest.Visible = _visibleToPlayer.Contains(nest.Coord);
         }
 
         foreach (var formation in _formations)
@@ -522,24 +372,17 @@ public partial class BattleManager : Node3D
 
     private void SetupCamera()
     {
-        _camera = new CameraRig { Current = true };
+        _camera = new CameraRig { Current = true, Focus = new Vector3(3.5f, 0f, 5.8f) };
         AddChild(_camera);
     }
 
     private void SetupCursor()
     {
-        _cursorOk = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.45f, 1f, 0.45f, 0.32f),
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-        };
-        _cursorBad = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(1f, 0.35f, 0.3f, 0.32f),
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-        };
+        var cursorShader = GD.Load<Shader>("res://shaders/tactical_cursor.gdshader");
+        _cursorOk = new ShaderMaterial { Shader = cursorShader };
+        _cursorOk.SetShaderParameter("ink", new Color("#8cebd5"));
+        _cursorBad = new ShaderMaterial { Shader = cursorShader };
+        _cursorBad.SetShaderParameter("ink", new Color("#ff896a"));
         _markerMesh = new CylinderMesh
         {
             TopRadius = 0.32f,
@@ -563,15 +406,8 @@ public partial class BattleManager : Node3D
 
         _cursor = new MeshInstance3D
         {
-            Mesh = new CylinderMesh
-            {
-                TopRadius = 1.18f,
-                BottomRadius = 1.18f,
-                Height = 0.05f,
-                RadialSegments = 6,
-            },
+            Mesh = new PlaneMesh { Size = Vector2.One * (2f * HexMap.HexSize) },
             MaterialOverride = _cursorOk,
-            RotationDegrees = new Vector3(0f, 30f, 0f),
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             Visible = false,
         };
@@ -2491,7 +2327,7 @@ public partial class BattleManager : Node3D
         }
 
         _cursor.Visible = true;
-        _cursor.Position = _map.ToWorld(coord) + new Vector3(0f, 0.3f, 0f);
+        _cursor.Position = _map.ToWorld(coord) + Vector3.Up * (_landscape.SurfaceHeight(coord) + 0.045f);
 
         bool ok = CanEnter(_selected, coord);
         if (!ok && _selected.IsTruck && _ground.TryGetValue(coord, out var ground)
@@ -2861,7 +2697,7 @@ public partial class BattleManager : Node3D
             {
                 Mesh = _markerMesh,
                 MaterialOverride = _markerMaterial,
-                Position = _map.ToWorld(coord) + new Vector3(0f, 0.32f, 0f),
+                Position = _map.ToWorld(coord) + Vector3.Up * (_landscape.SurfaceHeight(coord) + 0.1f),
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             };
             AddChild(marker);

@@ -11,7 +11,7 @@ public partial class CameraRig : Camera3D
 
     public Vector3 Focus = Vector3.Zero;
 
-    private float _distance = 30f;
+    private float _distance = 27f;
     private bool _dragging;
 
     public override void _Ready()
