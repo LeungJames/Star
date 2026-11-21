@@ -234,6 +234,7 @@ public class TechManager
         _researching = null;
         _elapsed = 0f;
         node.Unlocked = true;
+        _battle.PlayAudioCue(WastelandAudio.Cue.Complete);
         _battle.ShowMessage($"科技点亮：{node.Name}（{node.Description}）");
     }
 
@@ -272,6 +273,7 @@ public class TechManager
         }
 
         candidate.Unlocked = true;
+        _battle.PlayAudioCue(WastelandAudio.Cue.Complete);
         _battle.ShowMessage($"逆向工程跳级点亮：{candidate.Name}");
         return true;
     }

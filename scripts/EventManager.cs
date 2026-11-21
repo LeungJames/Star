@@ -175,6 +175,11 @@ public class EventManager
 
     private void Show(GameEvent gameEvent)
     {
+        if (gameEvent.Id != "storm")
+        {
+            _battle.PlayAudioCue(gameEvent.Major ? WastelandAudio.Cue.Decision : WastelandAudio.Cue.Notice);
+        }
+
         if (gameEvent.Major)
         {
             _activeMajor = gameEvent;

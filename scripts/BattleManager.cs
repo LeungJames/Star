@@ -90,6 +90,8 @@ public partial class BattleManager : Node3D
     private PanelContainer _debugPanel;
     private Label _debugLabel;
 
+    private WastelandAudio _sound;
+
     internal WorldClock Clock { get; private set; }
 
     public override void _Ready()
@@ -127,6 +129,10 @@ public partial class BattleManager : Node3D
             ShowMessage("沙暴结束，视野与行动恢复正常");
             OnSandstormBuildingDamage(false);
         };
+
+        _sound = new WastelandAudio { Name = "Soundscape" };
+        _sound.ConnectWorld(Clock, _camera, _buildings.Core?.Position ?? Vector3.Zero);
+        AddChild(_sound);
 
         SpawnFormations();
         _resources = new ResourceManager(this, _buildings);
@@ -1192,6 +1198,8 @@ public partial class BattleManager : Node3D
     internal bool IsGroundCellOccupied(HexCoord coord) =>
         _ground.ContainsKey(coord) || (_buildings != null && _buildings.IsOccupied(coord));
 
+    internal void PlayAudioCue(WastelandAudio.Cue cue) => _sound?.PlayCue(cue);
+
     private void SelectAt(Vector2 screenPosition)
     {
         var picked = PickFormation(screenPosition, 48f);
@@ -1200,6 +1208,11 @@ public partial class BattleManager : Node3D
             var coord = _map.ToCoord(world);
             if (_buildings != null && _buildings.At(coord) is { } building)
             {
+                if (_selectedBuilding != building)
+                {
+                    PlayAudioCue(WastelandAudio.Cue.Select);
+                }
+
                 SetSelectedBuilding(building);
                 return;
             }
@@ -1212,6 +1225,11 @@ public partial class BattleManager : Node3D
             {
                 picked = air;
             }
+        }
+
+        if (picked != null && picked != _selected)
+        {
+            PlayAudioCue(WastelandAudio.Cue.Select);
         }
 
         SetSelected(picked);
@@ -1287,13 +1305,14 @@ public partial class BattleManager : Node3D
         if (_selected == null)
         {
             ShowMessage("先左键选中一个编队");
+            PlayAudioCue(WastelandAudio.Cue.Denied);
             return;
         }
 
         var picked = PickFormation(screenPosition, 46f);
         if (_selected.IsTruck && picked != null && picked.IsPlayer && !picked.IsTruck && !picked.IsAir)
         {
-            OrderRefuel(_selected, picked);
+            PlayAudioCue(OrderRefuel(_selected, picked) ? WastelandAudio.Cue.Order : WastelandAudio.Cue.Denied);
             return;
         }
 
@@ -1302,7 +1321,8 @@ public partial class BattleManager : Node3D
             return;
         }
 
-        IssueMove(_selected, _map.ToCoord(world));
+        bool ordered = IssueMove(_selected, _map.ToCoord(world));
+        PlayAudioCue(ordered ? WastelandAudio.Cue.Order : WastelandAudio.Cue.Denied);
     }
 
     internal bool IssueMove(Formation formation, HexCoord goal, bool playerOrder = true)
@@ -1437,25 +1457,25 @@ public partial class BattleManager : Node3D
         formation.Reserved.Clear();
     }
 
-    private void OrderRefuel(Formation truck, Formation target)
+    private bool OrderRefuel(Formation truck, Formation target)
     {
         if (target.Fuel >= target.MaxFuel - 0.5f)
         {
             ShowMessage("目标燃油已满");
-            return;
+            return false;
         }
 
         if (truck.Cargo <= 0f)
         {
             ShowMessage("补给车已空");
-            return;
+            return false;
         }
 
         if (truck.Coord.DistanceTo(target.Coord) <= 1)
         {
             truck.RefuelTarget = target;
             ShowMessage("补给车开始加油");
-            return;
+            return true;
         }
 
         HexCoord? goal = null;
@@ -1479,14 +1499,17 @@ public partial class BattleManager : Node3D
         if (goal == null)
         {
             ShowMessage("目标周围没有空位");
-            return;
+            return false;
         }
 
-        if (IssueMove(truck, goal.Value))
+        if (!IssueMove(truck, goal.Value))
         {
-            truck.RefuelTarget = target;
-            ShowMessage("补给车前往目标加油");
+            return false;
         }
+
+        truck.RefuelTarget = target;
+        ShowMessage("补给车前往目标加油");
+        return true;
     }
 
     private void UpdateMovement(float dt)
@@ -2303,6 +2326,7 @@ public partial class BattleManager : Node3D
             beam.Position = from + delta * 0.5f;
             beam.LookAt(to, Vector3.Up);
             beam.Scale = new Vector3(1f, 1f, length);
+            _sound?.ObserveFire(attacker.Kind, from);
         }
     }
 
@@ -2530,6 +2554,7 @@ public partial class BattleManager : Node3D
         }
 
         _gameOver = true;
+        _sound?.EndSession(false);
         SetSelected(null);
         if (_defeatLabel != null)
         {
@@ -2551,6 +2576,7 @@ public partial class BattleManager : Node3D
         }
 
         _gameOver = true;
+        _sound?.EndSession(true);
         SetSelected(null);
         if (_victoryLabel != null)
         {

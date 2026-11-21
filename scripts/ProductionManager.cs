@@ -232,6 +232,7 @@ public class ProductionManager
 
             if (TryDeploy(building, current))
             {
+                _battle.PlayAudioCue(WastelandAudio.Cue.Complete);
                 queue.RemoveAt(0);
                 if (queue.Count == 0)
                 {
