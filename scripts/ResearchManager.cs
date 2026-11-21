@@ -14,42 +14,15 @@ public partial class RuinSite : Node3D
 
     public override void _Ready()
     {
-        var stone = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.3f, 0.26f), Roughness = 1f };
-        var color = Line switch
+        string asset = Line switch
         {
-            TechLine.Military => new Color(0.9f, 0.42f, 0.3f),
-            TechLine.Survival => new Color(0.5f, 0.85f, 0.45f),
-            _ => new Color(0.45f, 0.7f, 1f),
+            TechLine.Military => "ruin_military",
+            TechLine.Survival => "ruin_survival",
+            _ => "ruin_civilization",
         };
-        var glow = new StandardMaterial3D
-        {
-            AlbedoColor = color,
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            EmissionEnabled = true,
-            Emission = color,
-            EmissionEnergyMultiplier = 1.1f,
-        };
-
-        AddChild(new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = new Vector3(0.85f, 1.1f, 0.85f) },
-            MaterialOverride = stone,
-            Position = new Vector3(0f, 0.55f, 0f),
-            RotationDegrees = new Vector3(0f, 22f, 0f),
-        });
-        AddChild(new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = new Vector3(0.5f, 0.7f, 0.5f) },
-            MaterialOverride = stone,
-            Position = new Vector3(0.45f, 0.35f, -0.3f),
-            RotationDegrees = new Vector3(0f, -14f, 12f),
-        });
-        AddChild(new MeshInstance3D
-        {
-            Mesh = new SphereMesh { Radius = 0.22f, Height = 0.34f, RadialSegments = 10, Rings = 5 },
-            MaterialOverride = glow,
-            Position = new Vector3(0f, 1.25f, 0f),
-        });
+        var model = ModelArt.Instantiate(asset);
+        model.Position = Vector3.Up * 0.14f;
+        AddChild(model);
     }
 }
 

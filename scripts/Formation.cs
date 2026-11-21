@@ -107,9 +107,12 @@ public partial class Formation : Node3D
 
     public float BeamHeight => IsAir ? 2.9f : 0.6f;
 
+    private readonly List<Node3D> _unitModels = new();
     private Node3D _body;
+    private int _visibleUnitCount = -1;
     private Node3D _healthBar;
     private MeshInstance3D _healthFill;
+    private const float AirVisualHeight = 3.15f;
     private float _hoverTime;
 
     public static Formation CreateLightTank(int units = 3, Captain captain = null)
@@ -396,10 +399,11 @@ public partial class Formation : Node3D
 
     public override void _Process(double delta)
     {
+        RefreshUnitModels();
         if (IsAir && _body != null)
         {
             _hoverTime += (float)delta;
-            _body.Position = new Vector3(0f, Mathf.Sin(_hoverTime * 2.2f) * 0.12f, 0f);
+            _body.Position = Vector3.Up * (AirVisualHeight + Mathf.Sin(_hoverTime * 2.2f) * 0.12f);
         }
 
         if (_healthBar == null)
@@ -414,46 +418,41 @@ public partial class Formation : Node3D
 
     private void BuildVisual()
     {
-        _body = new Node3D { Name = "Body" };
+        _body = new Node3D
+        {
+            Name = "Body",
+            Position = Vector3.Up * (IsAir ? AirVisualHeight : 0.14f),
+        };
         AddChild(_body);
 
-        switch (Kind)
+        string asset = Kind switch
         {
-            case FormationKind.LightTank:
-                BuildTanks(1f);
-                break;
-            case FormationKind.MediumTank:
-                BuildTanks(1.12f);
-                break;
-            case FormationKind.HeavyTank:
-                BuildTanks(1.28f);
-                break;
-            case FormationKind.Infantry:
-                BuildInfantry();
-                break;
-            case FormationKind.LightShip:
-                BuildShips();
-                break;
-            case FormationKind.MediumShip:
-                BuildShips(1.15f);
-                break;
-            case FormationKind.SupplyTruck:
-                BuildTruck();
-                break;
-            case FormationKind.RepairTruck:
-                BuildRepairTruck();
-                break;
-            case FormationKind.Alien:
-                BuildAliens();
-                break;
-            case FormationKind.ScienceTeam:
-                BuildScienceTeam();
-                break;
+            FormationKind.LightTank => IsPlayer ? "light_tank" : "enemy_light_tank",
+            FormationKind.MediumTank => "medium_tank",
+            FormationKind.HeavyTank => IsPlayer ? "heavy_tank" : "enemy_heavy_tank",
+            FormationKind.Infantry => "infantry",
+            FormationKind.LightShip => "light_ship",
+            FormationKind.MediumShip => "medium_ship",
+            FormationKind.SupplyTruck => "supply_truck",
+            FormationKind.RepairTruck => "repair_truck",
+            FormationKind.Alien => "alien",
+            FormationKind.ScienceTeam => "science_team",
+            _ => "survey_vehicle",
+        };
+
+        for (int unit = 0; unit < Units; unit++)
+        {
+            var instance = ModelArt.Instantiate(asset);
+            instance.Position = UnitOffset(unit);
+            instance.Scale = Vector3.One * (Units >= 5 ? 0.72f : Units == 4 ? 0.85f : 1f);
+            _body.AddChild(instance);
+            _unitModels.Add(instance);
         }
+        RefreshUnitModels();
 
         var highlightMaterial = new StandardMaterial3D
         {
-            AlbedoColor = new Color(0.65f, 1f, 0.55f, 0.95f),
+            AlbedoColor = new Color(0.59f, 0.96f, 0.87f, 0.95f),
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
         };
@@ -463,8 +462,8 @@ public partial class Formation : Node3D
             {
                 InnerRadius = 0.95f,
                 OuterRadius = 1.12f,
-                Rings = 32,
-                RingSegments = 8,
+                Rings = 24,
+                RingSegments = 4,
             },
             MaterialOverride = highlightMaterial,
             Position = new Vector3(0f, 0.3f, 0f),
@@ -473,6 +472,43 @@ public partial class Formation : Node3D
         };
         AddChild(highlight);
         Highlight = highlight;
+    }
+
+    private Vector3 UnitOffset(int index)
+    {
+        if (Units == 1)
+        {
+            return Vector3.Zero;
+        }
+
+        int frontCount = (Units + 1) / 2;
+        bool front = index < frontCount;
+        int rowCount = front ? frontCount : Units - frontCount;
+        int column = front ? index : index - frontCount;
+        float spacing = IsInfantry || IsScienceTeam ? 0.54f : 0.80f;
+        float x = (column - (rowCount - 1) * 0.5f) * (rowCount == 3 ? spacing : spacing * 1.27f);
+
+        if (Units == 2)
+        {
+            return new Vector3(front ? -spacing * 0.6f : spacing * 0.6f, 0f, front ? 0.2f : -0.2f);
+        }
+
+        return new Vector3(x, 0f, (front ? 1f : -1f) * (IsInfantry ? 0.38f : 0.48f));
+    }
+
+    private void RefreshUnitModels()
+    {
+        int alive = AliveUnits;
+        if (_visibleUnitCount == alive)
+        {
+            return;
+        }
+
+        _visibleUnitCount = alive;
+        for (int i = 0; i < _unitModels.Count; i++)
+        {
+            _unitModels[i].Visible = i < alive;
+        }
     }
 
     private void BuildHealthBar()
@@ -489,7 +525,7 @@ public partial class Formation : Node3D
             NoDepthTest = true,
         };
         var fillColor = Faction == Faction.Player
-            ? new Color(0.45f, 0.95f, 0.4f, 0.95f)
+            ? new Color(0.37f, 0.77f, 0.68f, 0.95f)
             : new Color(0.95f, 0.35f, 0.3f, 0.95f);
         var fillMaterial = new StandardMaterial3D
         {
@@ -515,176 +551,5 @@ public partial class Formation : Node3D
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
         };
         _healthBar.AddChild(_healthFill);
-    }
-
-    private void BuildTanks(float scale)
-    {
-        bool enemy = Faction == Faction.Enemy;
-        var hull = new StandardMaterial3D
-        {
-            AlbedoColor = enemy ? new Color(0.48f, 0.25f, 0.21f) : new Color(0.5f, 0.55f, 0.34f),
-            Roughness = 0.85f,
-        };
-        var turret = new StandardMaterial3D
-        {
-            AlbedoColor = enemy ? new Color(0.3f, 0.15f, 0.13f) : new Color(0.3f, 0.33f, 0.23f),
-            Roughness = 0.85f,
-        };
-        var offsets = new[]
-        {
-            new Vector3(-0.55f, 0f, 0.35f),
-            new Vector3(0.55f, 0f, 0.35f),
-            new Vector3(0f, 0f, -0.5f),
-        };
-
-        foreach (var offset in offsets)
-        {
-            AddBox(_body, new Vector3(0.62f, 0.26f, 0.9f) * scale, offset + new Vector3(0f, 0.33f, 0f), hull);
-            AddBox(_body, new Vector3(0.34f, 0.18f, 0.36f) * scale, offset + new Vector3(0f, 0.55f, -0.06f), turret);
-        }
-    }
-
-    private void BuildInfantry()
-    {
-        var uniform = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.5f, 0.3f), Roughness = 0.9f };
-        var head = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.58f, 0.45f), Roughness = 0.9f };
-        var offsets = new[]
-        {
-            new Vector3(-0.38f, 0f, 0.25f),
-            new Vector3(0.38f, 0f, 0.25f),
-            new Vector3(0f, 0f, -0.4f),
-        };
-
-        foreach (var offset in offsets)
-        {
-            AddBox(_body, new Vector3(0.26f, 0.52f, 0.26f), offset + new Vector3(0f, 0.46f, 0f), uniform);
-            AddBox(_body, new Vector3(0.18f, 0.18f, 0.18f), offset + new Vector3(0f, 0.81f, 0f), head);
-        }
-    }
-
-    private void BuildShips(float scale = 1f)
-    {
-        var hull = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.64f, 0.7f), Metallic = 0.5f, Roughness = 0.4f };
-        var canopy = new StandardMaterial3D { AlbedoColor = new Color(0.25f, 0.55f, 0.65f), Roughness = 0.2f };
-        var engine = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.35f, 0.9f, 1f),
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            EmissionEnabled = true,
-            Emission = new Color(0.3f, 0.8f, 1f),
-            EmissionEnergyMultiplier = 2f,
-        };
-        var offsets = new[]
-        {
-            new Vector3(-0.5f, 0f, 0.3f),
-            new Vector3(0.5f, 0f, 0.3f),
-            new Vector3(0f, 0f, -0.55f),
-        };
-        float height = 3.2f * scale;
-
-        foreach (var offset in offsets)
-        {
-            var at = offset * scale;
-            AddBox(_body, new Vector3(0.55f, 0.16f, 1.05f) * scale, at + new Vector3(0f, height, 0f), hull);
-            AddBox(_body, new Vector3(0.3f, 0.18f, 0.34f) * scale, at + new Vector3(0f, height + 0.12f * scale, -0.2f * scale), canopy);
-            AddBox(_body, new Vector3(0.22f, 0.08f, 0.14f) * scale, at + new Vector3(0f, height, 0.58f * scale), engine);
-        }
-    }
-
-    private void BuildTruck()
-    {
-        var chassis = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.42f, 0.18f), Roughness = 0.9f };
-        var cab = new StandardMaterial3D { AlbedoColor = new Color(0.78f, 0.6f, 0.32f), Roughness = 0.8f };
-        var tank = new StandardMaterial3D { AlbedoColor = new Color(0.6f, 0.62f, 0.64f), Metallic = 0.6f, Roughness = 0.35f };
-
-        AddBox(_body, new Vector3(0.62f, 0.28f, 1.05f), new Vector3(0f, 0.34f, 0f), chassis);
-        AddBox(_body, new Vector3(0.58f, 0.3f, 0.34f), new Vector3(0f, 0.42f, -0.62f), cab);
-        AddCylinder(_body, 0.22f, 0.68f, new Vector3(0f, 0.62f, 0.2f), tank);
-    }
-
-    private void BuildRepairTruck()
-    {
-        var chassis = new StandardMaterial3D { AlbedoColor = new Color(0.7f, 0.6f, 0.2f), Roughness = 0.9f };
-        var cab = new StandardMaterial3D { AlbedoColor = new Color(0.82f, 0.75f, 0.4f), Roughness = 0.8f };
-        var tool = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.58f, 0.6f), Metallic = 0.5f, Roughness = 0.4f };
-
-        AddBox(_body, new Vector3(0.62f, 0.28f, 1.05f), new Vector3(0f, 0.34f, 0f), chassis);
-        AddBox(_body, new Vector3(0.58f, 0.3f, 0.34f), new Vector3(0f, 0.42f, -0.62f), cab);
-        AddBox(_body, new Vector3(0.18f, 0.18f, 0.5f), new Vector3(0f, 0.78f, 0.15f), tool);
-        AddBox(_body, new Vector3(0.4f, 0.1f, 0.1f), new Vector3(0f, 1.0f, 0.35f), tool);
-    }
-
-    private void BuildScienceTeam()
-    {
-        var coat = new StandardMaterial3D { AlbedoColor = new Color(0.88f, 0.9f, 0.86f), Roughness = 0.7f };
-        var gear = new StandardMaterial3D { AlbedoColor = new Color(0.35f, 0.55f, 0.45f), Roughness = 0.6f };
-        var offsets = new[]
-        {
-            new Vector3(-0.3f, 0f, 0.2f),
-            new Vector3(0.3f, 0f, -0.15f),
-        };
-
-        foreach (var offset in offsets)
-        {
-            AddBox(_body, new Vector3(0.26f, 0.52f, 0.24f), offset + new Vector3(0f, 0.42f, 0f), coat);
-            AddBox(_body, new Vector3(0.18f, 0.16f, 0.18f), offset + new Vector3(0f, 0.76f, 0f), gear);
-            AddBox(_body, new Vector3(0.16f, 0.22f, 0.1f), offset + new Vector3(0f, 0.5f, 0.16f), gear);
-        }
-
-        AddBox(_body, new Vector3(0.5f, 0.18f, 0.4f), new Vector3(0f, 0.12f, -0.45f), gear);
-    }
-
-    private void BuildAliens()
-    {
-        var shell = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.18f, 0.34f), Roughness = 0.9f };
-        var glow = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.95f, 0.35f, 0.6f),
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            EmissionEnabled = true,
-            Emission = new Color(0.85f, 0.25f, 0.5f),
-            EmissionEnergyMultiplier = 1.4f,
-        };
-        var offsets = new[]
-        {
-            new Vector3(-0.38f, 0f, 0.25f),
-            new Vector3(0.38f, 0f, 0.25f),
-            new Vector3(0f, 0f, -0.4f),
-        };
-
-        foreach (var offset in offsets)
-        {
-            AddBox(_body, new Vector3(0.34f, 0.5f, 0.34f), offset + new Vector3(0f, 0.45f, 0f), shell);
-            AddBox(_body, new Vector3(0.14f, 0.12f, 0.14f), offset + new Vector3(0f, 0.78f, 0f), glow);
-        }
-    }
-
-    private static void AddBox(Node3D parent, Vector3 size, Vector3 position, Material material)
-    {
-        var instance = new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = size },
-            MaterialOverride = material,
-            Position = position,
-        };
-        parent.AddChild(instance);
-    }
-
-    private static void AddCylinder(Node3D parent, float radius, float height, Vector3 position, Material material)
-    {
-        var instance = new MeshInstance3D
-        {
-            Mesh = new CylinderMesh
-            {
-                TopRadius = radius,
-                BottomRadius = radius,
-                Height = height,
-                RadialSegments = 12,
-            },
-            MaterialOverride = material,
-            Position = position,
-            RotationDegrees = new Vector3(90f, 0f, 0f),
-        };
-        parent.AddChild(instance);
     }
 }

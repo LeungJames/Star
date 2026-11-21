@@ -19,40 +19,9 @@ public partial class Nest : Node3D
 
     public override void _Ready()
     {
-        var flesh = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.14f, 0.26f), Roughness = 0.85f };
-        var vein = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.95f, 0.32f, 0.52f),
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            EmissionEnabled = true,
-            Emission = new Color(0.8f, 0.2f, 0.4f),
-            EmissionEnergyMultiplier = 1.2f,
-        };
-
-        AddChild(new MeshInstance3D
-        {
-            Mesh = new CylinderMesh
-            {
-                TopRadius = 0.35f,
-                BottomRadius = 0.95f,
-                Height = 0.7f,
-                RadialSegments = 9,
-            },
-            MaterialOverride = flesh,
-            Position = new Vector3(0f, 0.35f, 0f),
-        });
-        AddChild(new MeshInstance3D
-        {
-            Mesh = new SphereMesh { Radius = 0.4f, Height = 0.58f, RadialSegments = 12, Rings = 6 },
-            MaterialOverride = flesh,
-            Position = new Vector3(0f, 0.85f, 0f),
-        });
-        AddChild(new MeshInstance3D
-        {
-            Mesh = new SphereMesh { Radius = 0.16f, Height = 0.28f, RadialSegments = 10, Rings = 4 },
-            MaterialOverride = vein,
-            Position = new Vector3(0f, 1.05f, 0f),
-        });
+        var model = ModelArt.Instantiate("alien_nest");
+        model.Position = Vector3.Up * 0.14f;
+        AddChild(model);
     }
 
     public override void _Process(double delta)
@@ -474,63 +443,21 @@ public class VictoryManager
 
     private Node3D BuildArk()
     {
-        var root = new Node3D { Position = _battle.Map.ToWorld(ArkCoord) + new Vector3(0f, 0.2f, 0f) };
-        _battle.AddChild(root);
-
-        var hullMaterial = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.44f, 0.48f), Metallic = 0.4f, Roughness = 0.6f };
-        var scorch = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.17f, 0.15f), Roughness = 1f };
-        root.AddChild(new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = new Vector3(1.6f, 0.7f, 2.6f) },
-            MaterialOverride = hullMaterial,
-            Position = new Vector3(0f, 0.45f, 0f),
-            RotationDegrees = new Vector3(0f, 18f, 0f),
-        });
-        root.AddChild(new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = new Vector3(1.7f, 0.25f, 1f) },
-            MaterialOverride = scorch,
-            Position = new Vector3(0.2f, 0.75f, -0.6f),
-            RotationDegrees = new Vector3(0f, 18f, 0f),
-        });
-        root.AddChild(new MeshInstance3D
-        {
-            Mesh = new CylinderMesh { TopRadius = 0.3f, BottomRadius = 0.5f, Height = 1f, RadialSegments = 8 },
-            MaterialOverride = hullMaterial,
-            Position = new Vector3(-0.7f, 0.6f, 0.8f),
-        });
-        root.Visible = false;
-        return root;
+        var ark = ModelArt.Instantiate("ark_wreck");
+        ark.Position = _battle.Map.ToWorld(ArkCoord) + Vector3.Up * 0.085f;
+        ark.RotationDegrees = new Vector3(0f, 18f, 0f);
+        ark.Visible = false;
+        _battle.AddChild(ark);
+        return ark;
     }
 
     private Node3D BuildBeacon()
     {
         var core = _buildings.CoreCoord ?? new HexCoord(0, 5);
-        var root = new Node3D { Position = _battle.Map.ToWorld(core) + new Vector3(0f, 0.4f, 1.1f) };
-        _battle.AddChild(root);
-
-        var metal = new StandardMaterial3D { AlbedoColor = new Color(0.6f, 0.62f, 0.66f), Metallic = 0.6f, Roughness = 0.35f };
-        var glow = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.5f, 0.9f, 1f),
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            EmissionEnabled = true,
-            Emission = new Color(0.4f, 0.85f, 1f),
-            EmissionEnergyMultiplier = 2f,
-        };
-        root.AddChild(new MeshInstance3D
-        {
-            Mesh = new CylinderMesh { TopRadius = 0.12f, BottomRadius = 0.22f, Height = 2.2f, RadialSegments = 8 },
-            MaterialOverride = metal,
-            Position = new Vector3(0f, 1.1f, 0f),
-        });
-        root.AddChild(new MeshInstance3D
-        {
-            Mesh = new SphereMesh { Radius = 0.22f, Height = 0.36f, RadialSegments = 10, Rings = 5 },
-            MaterialOverride = glow,
-            Position = new Vector3(0f, 2.35f, 0f),
-        });
-        root.Visible = false;
-        return root;
+        var beacon = ModelArt.Instantiate("rescue_beacon");
+        beacon.Position = _battle.Map.ToWorld(core) + new Vector3(0f, 0.4f, 1.1f);
+        beacon.Visible = false;
+        _battle.AddChild(beacon);
+        return beacon;
     }
 }
