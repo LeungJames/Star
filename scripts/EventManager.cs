@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using static Star.CommandTheme;
 
 namespace Star;
 
@@ -28,7 +29,7 @@ public class EventManager
     private readonly NestManager _nests;
     private readonly List<GameEvent> _events = new();
 
-    private PanelContainer _majorPanel;
+    private Control _majorPanel;
     private Label _majorTitle;
     private Label _majorText;
     private readonly Button[] _majorButtons = new Button[3];
@@ -57,68 +58,70 @@ public class EventManager
 
     public void BuildUi(Control root, Theme theme)
     {
-        _majorPanel = MakePanel(theme);
-        _majorPanel.CustomMinimumSize = new Vector2(500f, 0f);
-        var majorBox = new VBoxContainer();
-        majorBox.AddThemeConstantOverride("separation", 8);
-        _majorPanel.AddChild(majorBox);
-        _majorTitle = MakeLabel(string.Empty, theme, 20, new Color(1f, 0.82f, 0.55f));
+        var modal = new ColorRect { Color = new Color("0b1217c9"), ZIndex = 4 };
+        root.AddChild(modal);
+        modal.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        _majorPanel = modal;
+        var panel = Panel(theme, Alert);
+        modal.AddChild(panel);
+        var scroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+        };
+        panel.AddChild(scroll);
+        var majorBox = Column(10);
+        majorBox.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        scroll.AddChild(majorBox);
+        majorBox.AddChild(Label("重大抉择 · 时间暂停", theme, 13, Alert));
+        _majorTitle = Label(string.Empty, theme, 22, Ink, wrap: true);
         majorBox.AddChild(_majorTitle);
-        _majorText = MakeLabel(string.Empty, theme, 15, new Color(0.88f, 0.87f, 0.8f));
-        _majorText.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        _majorText.CustomMinimumSize = new Vector2(470f, 0f);
+        _majorText = Label(string.Empty, theme, 16, Muted, wrap: true);
         majorBox.AddChild(_majorText);
-        for (int i = 0; i < _majorButtons.Length; i++)
-        {
-            var button = new Button
-            {
-                Theme = theme,
-                CustomMinimumSize = new Vector2(0f, 34f),
-                FocusMode = Control.FocusModeEnum.None,
-            };
-            int index = i;
-            button.Pressed += () => ResolveMajor(index);
-            _majorButtons[i] = button;
-            majorBox.AddChild(button);
-        }
+        AddChoiceButtons(majorBox, _majorButtons, ResolveMajor);
+        _majorPanel.Hide();
 
-        root.AddChild(_majorPanel);
-        _majorPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.Center, Control.LayoutPresetMode.Minsize);
-        _majorPanel.Visible = false;
-
-        _minorPanel = MakePanel(theme);
-        _minorPanel.CustomMinimumSize = new Vector2(430f, 0f);
-        var minorBox = new VBoxContainer();
-        minorBox.AddThemeConstantOverride("separation", 4);
+        _minorPanel = Panel(theme, Brass);
+        _minorPanel.ZIndex = 2;
+        var minorBox = Column(5);
         _minorPanel.AddChild(minorBox);
-        _minorTitle = MakeLabel(string.Empty, theme, 15, new Color(0.95f, 0.85f, 0.6f));
-        _minorTitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _minorTitle = Label(string.Empty, theme, 15, Brass, wrap: true);
         minorBox.AddChild(_minorTitle);
-        _minorText = MakeLabel(string.Empty, theme, 13, new Color(0.82f, 0.82f, 0.75f));
-        _minorText.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _minorText = Label(string.Empty, theme, 13, Muted, wrap: true);
         minorBox.AddChild(_minorText);
-        var minorRow = new HBoxContainer();
-        minorRow.AddThemeConstantOverride("separation", 4);
-        minorBox.AddChild(minorRow);
-        for (int i = 0; i < _minorButtons.Length; i++)
-        {
-            var button = new Button
-            {
-                Theme = theme,
-                CustomMinimumSize = new Vector2(90f, 28f),
-                FocusMode = Control.FocusModeEnum.None,
-            };
-            int index = i;
-            button.Pressed += () => ResolveMinor(index);
-            _minorButtons[i] = button;
-            minorRow.AddChild(button);
-        }
+        var minorChoices = Flow();
+        minorBox.AddChild(minorChoices);
+        AddChoiceButtons(minorChoices, _minorButtons, ResolveMinor);
 
         root.AddChild(_minorPanel);
-        _minorPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomLeft, Control.LayoutPresetMode.Minsize, 16);
-        _minorPanel.OffsetTop -= 210f;
-        _minorPanel.OffsetBottom -= 210f;
-        _minorPanel.Visible = false;
+        _minorPanel.Hide();
+
+        void Layout()
+        {
+            float availableWidth = Mathf.Max(0f, root.Size.X - 24f);
+            float width = Mathf.Min(530f, availableWidth);
+            float height = Mathf.Min(420f, Mathf.Max(0f, root.Size.Y - 24f));
+            Anchor(panel, Control.LayoutPreset.Center, -width * 0.5f, -height * 0.5f, width * 0.5f, height * 0.5f);
+
+            float minorWidth = Mathf.Min(410f, availableWidth);
+            float minorHeight = _minorPanel.GetCombinedMinimumSize().Y;
+            Anchor(_minorPanel, Control.LayoutPreset.BottomRight, -12f - minorWidth, -82f - minorHeight, -12f, -82f);
+        }
+
+        root.Resized += Layout;
+        _minorPanel.MinimumSizeChanged += Layout;
+        Layout();
+    }
+
+    private static void AddChoiceButtons(Container parent, Button[] buttons, Action<int> resolve)
+    {
+        for (int i = 0; i < buttons.Length; i++)
+        {
+            int index = i;
+            var button = Button(string.Empty);
+            button.Pressed += () => resolve(index);
+            buttons[i] = button;
+            parent.AddChild(button);
+        }
     }
 
     public void NotifySampleTaken()
@@ -535,22 +538,5 @@ public class EventManager
     private void Consume(ResourceKind kind, float amount)
     {
         _resources.Consume(kind, amount);
-    }
-
-    private static PanelContainer MakePanel(Theme theme)
-    {
-        return new PanelContainer
-        {
-            Theme = theme,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-        };
-    }
-
-    private static Label MakeLabel(string text, Theme theme, int fontSize, Color color)
-    {
-        var label = new Label { Text = text, Theme = theme };
-        label.AddThemeFontSizeOverride("font_size", fontSize);
-        label.AddThemeColorOverride("font_color", color);
-        return label;
     }
 }

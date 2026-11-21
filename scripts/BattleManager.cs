@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Text;
 using Godot;
 
 namespace Star;
@@ -155,7 +154,10 @@ public partial class BattleManager : Node3D
         _events.BuildUi(_uiRoot, _hudTheme);
         UpdateVisibility();
 
-        ShowMessage("左键选中编队或建筑，右键下达移动命令");
+        UpdateHud();
+        UpdateClockHud();
+        UpdateBaseStats();
+        ShowMessage("点击地图上的编队或建筑查看详情");
     }
 
     public override void _Process(double delta)
@@ -224,7 +226,7 @@ public partial class BattleManager : Node3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (_paused)
+        if (_paused || _gameOver)
         {
             return;
         }
@@ -249,32 +251,29 @@ public partial class BattleManager : Node3D
                 return;
             }
 
-            if (key.Keycode == Key.T && _techPanel != null)
+            switch (key.Keycode)
             {
-                _techPanel.Visible = !_techPanel.Visible;
-                RefreshTechPanel();
-                return;
-            }
-
-            if (key.Keycode == Key.D && _diplomacyPanel != null)
-            {
-                _diplomacyPanel.Visible = !_diplomacyPanel.Visible;
-                RefreshDiplomacyPanel();
-                return;
-            }
-
-            if (key.Keycode == Key.C && _captainPanel != null)
-            {
-                _captainPanel.Visible = !_captainPanel.Visible;
-                RefreshCaptainPanel();
-                return;
-            }
-
-            if (key.Keycode == Key.F1 && _debugPanel != null)
-            {
-                _debugPanel.Visible = !_debugPanel.Visible;
-                RefreshDebugPanel();
-                return;
+                case Key.T:
+                    ToggleHudMenu(_techPanel);
+                    RefreshTechPanel();
+                    return;
+                case Key.G:
+                    ToggleHudMenu(_diplomacyPanel);
+                    RefreshDiplomacyPanel();
+                    return;
+                case Key.C:
+                    ToggleHudMenu(_captainPanel);
+                    RefreshCaptainPanel();
+                    return;
+                case Key.F1:
+                    ToggleHudMenu(_debugPanel);
+                    RefreshDebugPanel();
+                    return;
+                case Key.Escape:
+                    CloseHudMenu();
+                    CancelHudCommand();
+                    UpdateHudActions();
+                    return;
             }
         }
 
@@ -283,13 +282,16 @@ public partial class BattleManager : Node3D
             return;
         }
 
-        if (button.ButtonIndex == MouseButton.Left)
+        if (button.ButtonIndex == MouseButton.Left && !_commandArmed)
         {
             SelectAt(button.Position);
+            UpdateHud();
         }
-        else if (button.ButtonIndex == MouseButton.Right)
+        else if (button.ButtonIndex is MouseButton.Left or MouseButton.Right)
         {
+            CancelHudCommand();
             CommandAt(button.Position);
+            UpdateHudActions();
         }
     }
 
@@ -420,711 +422,6 @@ public partial class BattleManager : Node3D
         AddChild(_cursor);
     }
 
-    private void SetupHud()
-    {
-        var layer = new CanvasLayer();
-        AddChild(layer);
-
-        var ui = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
-        ui.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        layer.AddChild(ui);
-
-        var font = new SystemFont
-        {
-            FontNames = new[] { "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "SimHei" },
-        };
-        var theme = new Theme { DefaultFont = font, DefaultFontSize = 15 };
-
-        var hintPanel = MakePanel(theme);
-        var hintBox = new VBoxContainer();
-        hintBox.AddThemeConstantOverride("separation", 3);
-        hintPanel.AddChild(hintBox);
-        hintBox.AddChild(MakeLabel("STAR · 实时六角格战斗原型", theme, 20, new Color(0.82f, 0.9f, 0.66f)));
-        hintBox.AddChild(MakeLabel("左键：选中编队    右键：移动 / 加油指令", theme));
-        hintBox.AddChild(MakeLabel("WASD：平移相机    滚轮缩放    中键拖动平移", theme));
-        hintBox.AddChild(MakeLabel("编队进入射程后自动持续开火", theme, 15, new Color(0.95f, 0.78f, 0.55f)));
-        hintBox.AddChild(MakeLabel("迷雾：未探索区域被遮蔽，敌人进入视野才会现身", theme, 15, new Color(0.62f, 0.78f, 0.95f)));
-        hintBox.AddChild(MakeLabel("沙暴季：视野下降、油耗上升、移动变慢", theme, 15, new Color(0.95f, 0.7f, 0.45f)));
-        hintBox.AddChild(MakeLabel("建筑：维修车贴住受损建筑即可就地维修", theme, 15, new Color(0.72f, 0.9f, 0.7f)));
-        hintBox.AddChild(MakeLabel("资源：除燃料外自动回仓；仓储满则浪费，被摧毁会掉落库存", theme, 15, new Color(0.85f, 0.82f, 0.6f)));
-        hintBox.AddChild(MakeLabel("生产：选中兵营 / 坦克厂 / 机库下单；按 R 补员", theme, 15, new Color(0.78f, 0.8f, 0.95f)));
-        hintBox.AddChild(MakeLabel("异种巢穴会成长并孵化，清剿后在别处重生", theme, 15, new Color(0.95f, 0.6f, 0.72f)));
-        hintBox.AddChild(MakeLabel("胜利：V 修复方舟（工程体系）  B 立信标（通信阵列）  或撑过最后一轮沙暴", theme, 15, new Color(0.62f, 0.92f, 0.66f)));
-        hintBox.AddChild(MakeLabel("科技：按 T 打开三条科技线与逆向工程面板", theme, 15, new Color(0.72f, 0.88f, 0.96f)));
-        hintBox.AddChild(MakeLabel("外交：按 D 查看三方关系、交易、和谈与停战", theme, 15, new Color(0.96f, 0.84f, 0.6f)));
-        hintBox.AddChild(MakeLabel("队长：按 C 分配技能点；战斗与驻防都会积累经验", theme, 15, new Color(0.88f, 0.76f, 0.95f)));
-        hintBox.AddChild(MakeLabel("调试：按 F1 查看关键平衡数值与实时状态", theme, 15, new Color(0.7f, 0.72f, 0.7f)));
-        ui.AddChild(hintPanel);
-        hintPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
-
-        var infoPanel = MakePanel(theme);
-        _infoLabel = MakeLabel(string.Empty, theme);
-        _infoLabel.CustomMinimumSize = new Vector2(360f, 182f);
-        infoPanel.AddChild(_infoLabel);
-        ui.AddChild(infoPanel);
-        infoPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomLeft, Control.LayoutPresetMode.Minsize, 16);
-        infoPanel.GrowVertical = Control.GrowDirection.Begin;
-
-        _messageLabel = MakeLabel(string.Empty, theme, 18, new Color(1f, 0.93f, 0.72f));
-        _messageLabel.HorizontalAlignment = HorizontalAlignment.Center;
-        _messageLabel.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.85f));
-        _messageLabel.AddThemeConstantOverride("outline_size", 5);
-        ui.AddChild(_messageLabel);
-        _messageLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomWide, Control.LayoutPresetMode.Minsize, 16);
-        _messageLabel.OffsetTop -= 96f;
-        _messageLabel.OffsetBottom -= 96f;
-
-        var clockPanel = MakePanel(theme);
-        var clockBox = new VBoxContainer();
-        clockBox.AddThemeConstantOverride("separation", 2);
-        clockPanel.AddChild(clockBox);
-        _dayLabel = MakeLabel("第 1 日", theme, 20, new Color(0.85f, 0.92f, 0.78f));
-        _dayLabel.CustomMinimumSize = new Vector2(210f, 0f);
-        _stormStateLabel = MakeLabel("距沙暴 00:20", theme, 16, new Color(0.7f, 0.85f, 1f));
-        _stormStateLabel.CustomMinimumSize = new Vector2(210f, 0f);
-        _stormCycleLabel = MakeLabel("沙暴轮次 0    间隔 25 秒", theme, 13, new Color(0.62f, 0.66f, 0.6f));
-        _stormCycleLabel.CustomMinimumSize = new Vector2(210f, 0f);
-        clockBox.AddChild(_dayLabel);
-        clockBox.AddChild(_stormStateLabel);
-        clockBox.AddChild(_stormCycleLabel);
-        ui.AddChild(clockPanel);
-        clockPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight, Control.LayoutPresetMode.Minsize, 16);
-        clockPanel.GrowHorizontal = Control.GrowDirection.Begin;
-
-        var basePanel = MakePanel(theme);
-        _baseStatsLabel = MakeLabel(string.Empty, theme, 14, new Color(0.78f, 0.86f, 0.78f));
-        _baseStatsLabel.CustomMinimumSize = new Vector2(330f, 0f);
-        basePanel.AddChild(_baseStatsLabel);
-        ui.AddChild(basePanel);
-        basePanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomRight, Control.LayoutPresetMode.Minsize, 16);
-        basePanel.GrowHorizontal = Control.GrowDirection.Begin;
-        basePanel.GrowVertical = Control.GrowDirection.Begin;
-
-        _defeatLabel = MakeLabel("核心塔被摧毁\n方舟计划失败", theme, 44, new Color(1f, 0.36f, 0.3f));
-        _defeatLabel.HorizontalAlignment = HorizontalAlignment.Center;
-        _defeatLabel.VerticalAlignment = VerticalAlignment.Center;
-        _defeatLabel.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.9f));
-        _defeatLabel.AddThemeConstantOverride("outline_size", 8);
-        _defeatLabel.Visible = false;
-        ui.AddChild(_defeatLabel);
-        _defeatLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-
-        _victoryLabel = MakeLabel(string.Empty, theme, 40, new Color(0.6f, 0.95f, 0.6f));
-        _victoryLabel.HorizontalAlignment = HorizontalAlignment.Center;
-        _victoryLabel.VerticalAlignment = VerticalAlignment.Center;
-        _victoryLabel.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.9f));
-        _victoryLabel.AddThemeConstantOverride("outline_size", 8);
-        _victoryLabel.Visible = false;
-        ui.AddChild(_victoryLabel);
-        _victoryLabel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-
-        _uiRoot = ui;
-        _hudTheme = theme;
-        BuildProductionPanel(ui, theme);
-    }
-
-    private void BuildDiplomacyPanel()
-    {
-        if (_uiRoot == null || _factions == null)
-        {
-            return;
-        }
-
-        _diplomacyPanel = MakePanel(_hudTheme);
-        _diplomacyPanel.CustomMinimumSize = new Vector2(470f, 0f);
-        var box = new VBoxContainer();
-        box.AddThemeConstantOverride("separation", 4);
-        _diplomacyPanel.AddChild(box);
-        box.AddChild(MakeLabel("外交与势力（D 关闭）", _hudTheme, 16, new Color(0.92f, 0.86f, 0.7f)));
-
-        foreach (var state in _factions.States)
-        {
-            var row = new HBoxContainer();
-            row.AddThemeConstantOverride("separation", 4);
-            box.AddChild(row);
-
-            var label = MakeLabel(string.Empty, _hudTheme, 13, new Color(0.82f, 0.84f, 0.8f));
-            label.CustomMinimumSize = new Vector2(250f, 0f);
-            row.AddChild(label);
-            _factionLabels[state.Id] = label;
-
-            var id = state.Id;
-            var gift = new Button
-            {
-                Text = "送礼",
-                Theme = _hudTheme,
-                CustomMinimumSize = new Vector2(56f, 28f),
-                FocusMode = Control.FocusModeEnum.None,
-            };
-            gift.Pressed += () => { _factions.TryGift(id); RefreshDiplomacyPanel(); };
-            row.AddChild(gift);
-
-            var trade = new Button
-            {
-                Text = "交易",
-                Theme = _hudTheme,
-                CustomMinimumSize = new Vector2(56f, 28f),
-                FocusMode = Control.FocusModeEnum.None,
-            };
-            trade.Pressed += () => { _factions.TryTrade(id); RefreshDiplomacyPanel(); };
-            row.AddChild(trade);
-
-            var peace = new Button
-            {
-                Text = "和谈",
-                Theme = _hudTheme,
-                CustomMinimumSize = new Vector2(56f, 28f),
-                FocusMode = Control.FocusModeEnum.None,
-            };
-            peace.Pressed += () => { _factions.TryNegotiatePeace(id); RefreshDiplomacyPanel(); };
-            row.AddChild(peace);
-
-            var cede = new Button
-            {
-                Text = "让出前哨",
-                Theme = _hudTheme,
-                CustomMinimumSize = new Vector2(76f, 28f),
-                FocusMode = Control.FocusModeEnum.None,
-            };
-            cede.Pressed += () => { _factions.TryCedeOutpost(id); RefreshDiplomacyPanel(); };
-            row.AddChild(cede);
-        }
-
-        _diplomacyStatusLabel = MakeLabel(string.Empty, _hudTheme, 13, new Color(0.8f, 0.82f, 0.72f));
-        box.AddChild(_diplomacyStatusLabel);
-
-        _uiRoot.AddChild(_diplomacyPanel);
-        _diplomacyPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.Center, Control.LayoutPresetMode.Minsize);
-        _diplomacyPanel.Visible = false;
-        RefreshDiplomacyPanel();
-    }
-
-    private void RefreshDiplomacyPanel()
-    {
-        if (_diplomacyPanel == null || _factions == null)
-        {
-            return;
-        }
-
-        foreach (var pair in _factionLabels)
-        {
-            var state = _factions.Get(pair.Key);
-            if (state == null)
-            {
-                continue;
-            }
-
-            pair.Value.Text = $"{state.Name}  关系 {state.Relation}  {state.StateName}  战力 {state.Strength}";
-        }
-
-        _diplomacyStatusLabel.Text = _factions.StatusText();
-    }
-
-    private void BuildCaptainPanel()
-    {
-        if (_uiRoot == null || _production == null)
-        {
-            return;
-        }
-
-        _captainPanel = MakePanel(_hudTheme);
-        _captainPanel.CustomMinimumSize = new Vector2(600f, 0f);
-        var box = new VBoxContainer();
-        box.AddThemeConstantOverride("separation", 6);
-        _captainPanel.AddChild(box);
-        box.AddChild(MakeLabel("队长成长（C 关闭）· 战斗与驻防都会积累经验",
-            _hudTheme, 16, new Color(0.88f, 0.76f, 0.95f)));
-
-        foreach (var captain in _production.Captains)
-        {
-            var block = new VBoxContainer();
-            block.AddThemeConstantOverride("separation", 2);
-            box.AddChild(block);
-
-            var header = MakeLabel(string.Empty, _hudTheme, 13, new Color(0.85f, 0.86f, 0.8f));
-            block.AddChild(header);
-
-            var row = new HBoxContainer();
-            row.AddThemeConstantOverride("separation", 4);
-            block.AddChild(row);
-
-            var skillDefs = captain.SkillLine;
-            var buttons = new Button[skillDefs.Count];
-            for (int i = 0; i < skillDefs.Count; i++)
-            {
-                var def = skillDefs[i];
-                var button = new Button
-                {
-                    Theme = _hudTheme,
-                    CustomMinimumSize = new Vector2(190f, 34f),
-                    FocusMode = Control.FocusModeEnum.None,
-                    TooltipText = def.Description,
-                };
-                button.Pressed += () =>
-                {
-                    if (captain.Learn(def.Skill))
-                    {
-                        ShowMessage($"{captain.Name} 学会 {def.Name}：{def.Description}");
-                    }
-
-                    RefreshCaptainPanel();
-                };
-                row.AddChild(button);
-                buttons[i] = button;
-            }
-
-            _captainRows.Add((captain, header, buttons));
-        }
-
-        _uiRoot.AddChild(_captainPanel);
-        _captainPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.Center, Control.LayoutPresetMode.Minsize);
-        _captainPanel.Visible = false;
-        RefreshCaptainPanel();
-    }
-
-    private void RefreshCaptainPanel()
-    {
-        if (_captainPanel == null || _production == null)
-        {
-            return;
-        }
-
-        foreach (var row in _captainRows)
-        {
-            var captain = row.Captain;
-            string assignment = "待命";
-            if (!captain.IsAlive)
-            {
-                assignment = "已阵亡";
-            }
-            else
-            {
-                foreach (var formation in _formations)
-                {
-                    if (formation.Captain == captain && formation.Hp > 0f)
-                    {
-                        assignment = $"编队 {formation.DisplayName}";
-                        break;
-                    }
-                }
-            }
-
-            row.Header.Text =
-                $"{captain.Name} · {captain.OriginName}（擅长{captain.Specialty}）  {captain.LevelText}" +
-                $"  技能点 {captain.SkillPoints}  {assignment}";
-
-            var defs = captain.SkillLine;
-            for (int i = 0; i < row.Buttons.Length && i < defs.Count; i++)
-            {
-                var def = defs[i];
-                var button = row.Buttons[i];
-                bool learned = captain.Has(def.Skill);
-                button.Text = learned ? $"✓ {def.Name}" : $"{def.Name}（Lv{def.RequiredLevel}）";
-                button.Disabled = learned || !captain.CanLearn(def.Skill);
-                button.Modulate = learned ? new Color(0.7f, 0.95f, 0.7f) : Colors.White;
-            }
-        }
-    }
-
-    private void BuildDebugPanel()
-    {
-        if (_uiRoot == null)
-        {
-            return;
-        }
-
-        _debugPanel = MakePanel(_hudTheme);
-        _debugPanel.CustomMinimumSize = new Vector2(620f, 0f);
-        var box = new VBoxContainer();
-        box.AddThemeConstantOverride("separation", 4);
-        _debugPanel.AddChild(box);
-        box.AddChild(MakeLabel("关键数值（F1 关闭）", _hudTheme, 16, new Color(0.78f, 0.82f, 0.86f)));
-        _debugLabel = MakeLabel(string.Empty, _hudTheme, 12, new Color(0.8f, 0.82f, 0.78f));
-        _debugLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        _debugLabel.CustomMinimumSize = new Vector2(600f, 0f);
-        box.AddChild(_debugLabel);
-
-        _uiRoot.AddChild(_debugPanel);
-        _debugPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.Center, Control.LayoutPresetMode.Minsize);
-        _debugPanel.Visible = false;
-        RefreshDebugPanel();
-    }
-
-    private void RefreshDebugPanel()
-    {
-        if (_debugLabel == null)
-        {
-            return;
-        }
-
-        var builder = new StringBuilder();
-        builder.AppendLine(GameBalance.Summary());
-        builder.AppendLine("【实时状态】");
-        builder.AppendLine($"第 {Clock.Day} 日  {(Clock.IsStorm ? "沙暴中" : Clock.IsWarning ? "沙暴预警" : "正常")}" +
-                           $"  沙暴轮次 {Clock.StormCount}");
-        builder.AppendLine($"士气 {_buildings.Morale}  人口 {_buildings.Population}/{_buildings.HousingCapacity}" +
-                           $"  岗位 {_buildings.AssignedJobs}/{_buildings.TotalJobs}");
-        builder.AppendLine($"资源 铁 {_resources.Get(ResourceKind.Scrap):F0}  油 {_resources.Get(ResourceKind.Fuel):F0}" +
-                           $"  食 {_resources.Get(ResourceKind.Food):F0}  药 {_resources.Get(ResourceKind.Medicine):F0}" +
-                           $"  数据 {_resources.Get(ResourceKind.Data):F0}");
-        foreach (var state in _factions.States)
-        {
-            builder.AppendLine($"{state.Name} 关系 {state.Relation}  {state.StateName}  战力 {state.Strength}");
-        }
-
-        foreach (var captain in _production.Captains)
-        {
-            string status = !captain.IsAlive ? "阵亡" : captain.InUse ? "在编" : "待命";
-            builder.AppendLine($"队长 {captain.Name} Lv.{captain.Level}" +
-                               $"{(captain.MaxLevel ? string.Empty : $" XP {captain.Xp:F0}/{captain.XpToNext:F0}")}" +
-                               $"  技能点 {captain.SkillPoints}  {status}");
-        }
-
-        _debugLabel.Text = builder.ToString().TrimEnd();
-    }
-
-    private void BuildTechPanel()
-    {
-        if (_uiRoot == null || _tech == null)
-        {
-            return;
-        }
-
-        _techPanel = MakePanel(_hudTheme);
-        _techPanel.CustomMinimumSize = new Vector2(430f, 0f);
-        var box = new VBoxContainer();
-        box.AddThemeConstantOverride("separation", 3);
-        _techPanel.AddChild(box);
-
-        box.AddChild(MakeLabel("科技与逆向工程（T 关闭）", _hudTheme, 16, new Color(0.82f, 0.9f, 0.95f)));
-        _techStatusLabel = MakeLabel(string.Empty, _hudTheme, 13, new Color(0.8f, 0.82f, 0.72f));
-        box.AddChild(_techStatusLabel);
-
-        TechLine[] lines = { TechLine.Military, TechLine.Survival, TechLine.Civilization };
-        foreach (var line in lines)
-        {
-            var row = new HBoxContainer();
-            row.AddThemeConstantOverride("separation", 3);
-            box.AddChild(row);
-            row.AddChild(MakeLabel(TechManager.LineName(line), _hudTheme, 13, new Color(0.7f, 0.72f, 0.66f)));
-            foreach (var node in _tech.Nodes)
-            {
-                if (node.Line != line)
-                {
-                    continue;
-                }
-
-                var button = new Button
-                {
-                    Theme = _hudTheme,
-                    CustomMinimumSize = new Vector2(78f, 30f),
-                    FocusMode = Control.FocusModeEnum.None,
-                };
-                var target = node;
-                button.Pressed += () => { _tech.TryStart(target); RefreshTechPanel(); };
-                row.AddChild(button);
-                _techButtons[node] = button;
-            }
-        }
-
-        var actionRow = new HBoxContainer();
-        actionRow.AddThemeConstantOverride("separation", 4);
-        box.AddChild(actionRow);
-
-        var deploy = new Button
-        {
-            Text = "部署科考队",
-            Theme = _hudTheme,
-            CustomMinimumSize = new Vector2(110f, 30f),
-            FocusMode = Control.FocusModeEnum.None,
-        };
-        deploy.Pressed += () => { _research.TryDeployTeam(); RefreshTechPanel(); };
-        actionRow.AddChild(deploy);
-
-        foreach (var line in lines)
-        {
-            var target = line;
-            var button = new Button
-            {
-                Text = $"研究{TechManager.LineName(line)}样本",
-                Theme = _hudTheme,
-                CustomMinimumSize = new Vector2(100f, 30f),
-                FocusMode = Control.FocusModeEnum.None,
-            };
-            button.Pressed += () => { _research.TryResearchSample(target); RefreshTechPanel(); };
-            actionRow.AddChild(button);
-        }
-
-        _uiRoot.AddChild(_techPanel);
-        _techPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight, Control.LayoutPresetMode.Minsize, 16);
-        _techPanel.OffsetTop += 158f;
-        _techPanel.OffsetBottom += 158f;
-        _techPanel.GrowHorizontal = Control.GrowDirection.Begin;
-        _techPanel.Visible = false;
-        RefreshTechPanel();
-    }
-
-    private void RefreshTechPanel()
-    {
-        if (_techPanel == null || _tech == null)
-        {
-            return;
-        }
-
-        foreach (var pair in _techButtons)
-        {
-            var node = pair.Key;
-            var button = pair.Value;
-            float cost = _tech.Cost(node);
-            button.Text = node.Unlocked ? $"✓{node.Name}" : $"{node.Name}\n{cost:F0} 数据";
-            button.Disabled = node.Unlocked || (_tech.Researching != null && _tech.Researching != node);
-            button.Modulate = node.Unlocked ? new Color(0.65f, 0.95f, 0.65f) : Colors.White;
-        }
-
-        var unstable = new System.Text.StringBuilder();
-        foreach (var kind in _tech.Unstable)
-        {
-            unstable.Append($"{TechManager.UnstableName(kind)} ");
-        }
-
-        string progress = _tech.Researching == null
-            ? "科技研究：空闲"
-            : $"科技研究：{_tech.Researching.Name} {_tech.ResearchProgress * 100f:F0}%";
-        _techStatusLabel.Text =
-            $"{progress}\n{_research.StatusText()}\n不稳定科技：{(unstable.Length > 0 ? unstable.ToString() : "无")}";
-    }
-
-    private void BuildProductionPanel(Control ui, Theme theme)
-    {
-        _productionPanel = MakePanel(theme);
-        var box = new VBoxContainer();
-        box.AddThemeConstantOverride("separation", 4);
-        _productionPanel.AddChild(box);
-
-        _productionTitle = MakeLabel("生产", theme, 16, new Color(0.85f, 0.92f, 0.78f));
-        box.AddChild(_productionTitle);
-
-        box.AddChild(MakeLabel("型号", theme, 13, new Color(0.7f, 0.72f, 0.66f)));
-        var modelRow = new HBoxContainer();
-        modelRow.AddThemeConstantOverride("separation", 4);
-        box.AddChild(modelRow);
-        var modelGroup = new ButtonGroup();
-        for (int i = 0; i < _modelButtons.Length; i++)
-        {
-            var button = MakeToggleButton("—", theme);
-            button.ButtonGroup = modelGroup;
-            int index = i;
-            button.Pressed += () => OnModelSelected(index);
-            _modelButtons[i] = button;
-            modelRow.AddChild(button);
-        }
-
-        box.AddChild(MakeLabel("人数", theme, 13, new Color(0.7f, 0.72f, 0.66f)));
-        var sizeRow = new HBoxContainer();
-        sizeRow.AddThemeConstantOverride("separation", 4);
-        box.AddChild(sizeRow);
-        var sizeGroup = new ButtonGroup();
-        for (int i = 0; i < _sizeButtons.Length; i++)
-        {
-            int units = i + 3;
-            var button = MakeToggleButton($"{units}", theme);
-            button.ButtonGroup = sizeGroup;
-            button.Pressed += () => { _orderUnits = units; RefreshProductionPanel(); };
-            _sizeButtons[i] = button;
-            sizeRow.AddChild(button);
-        }
-
-        box.AddChild(MakeLabel("队长", theme, 13, new Color(0.7f, 0.72f, 0.66f)));
-        var captainRow = new HBoxContainer();
-        captainRow.AddThemeConstantOverride("separation", 4);
-        box.AddChild(captainRow);
-        var captainGroup = new ButtonGroup();
-        for (int i = 0; i < _captainButtons.Length; i++)
-        {
-            int index = i;
-            var button = MakeToggleButton(i == 0 ? "无队长" : "队长", theme);
-            button.ButtonGroup = captainGroup;
-            button.Pressed += () => { _orderCaptain = index; RefreshProductionPanel(); };
-            _captainButtons[i] = button;
-            captainRow.AddChild(button);
-        }
-
-        _productionStatus = MakeLabel(string.Empty, theme, 13, new Color(0.85f, 0.86f, 0.72f));
-        _productionStatus.CustomMinimumSize = new Vector2(300f, 34f);
-        box.AddChild(_productionStatus);
-
-        var orderButton = new Button
-        {
-            Text = "下单生产",
-            Theme = theme,
-            CustomMinimumSize = new Vector2(0f, 32f),
-            FocusMode = Control.FocusModeEnum.None,
-        };
-        orderButton.Pressed += OrderSelected;
-        box.AddChild(orderButton);
-
-        ui.AddChild(_productionPanel);
-        _productionPanel.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.Minsize, 16);
-        _productionPanel.OffsetTop += 318f;
-        _productionPanel.OffsetBottom += 318f;
-        _productionPanel.Visible = false;
-    }
-
-    private static Button MakeToggleButton(string text, Theme theme)
-    {
-        return new Button
-        {
-            Text = text,
-            Theme = theme,
-            ToggleMode = true,
-            CustomMinimumSize = new Vector2(56f, 28f),
-            FocusMode = Control.FocusModeEnum.None,
-        };
-    }
-
-    private void OnModelSelected(int index)
-    {
-        var models = _uiBuilding != null && _production != null
-            ? _production.ModelsFor(_uiBuilding.Kind)
-            : System.Array.Empty<FormationKind>();
-        if (index < models.Length)
-        {
-            _orderKind = models[index];
-        }
-
-        RefreshProductionPanel();
-    }
-
-    private void OrderSelected()
-    {
-        if (_uiBuilding == null || _production == null)
-        {
-            return;
-        }
-
-        var captains = _production.Captains;
-        Captain captain = _orderCaptain > 0 && _orderCaptain <= captains.Count
-            ? captains[_orderCaptain - 1]
-            : null;
-        _production.Order(_uiBuilding, _orderKind, _orderUnits, captain);
-        RefreshProductionPanel();
-    }
-
-    private void ConfigureProductionPanel(Building building)
-    {
-        _uiBuilding = building;
-        var models = _production.ModelsFor(building.Kind);
-        _orderKind = models.Length > 0 ? models[0] : default;
-        _orderUnits = 3;
-        _orderCaptain = 0;
-        RefreshProductionPanel();
-    }
-
-    private void RefreshProductionPanel()
-    {
-        if (_productionPanel == null)
-        {
-            return;
-        }
-
-        if (_uiBuilding == null || _production == null || !_production.IsSupported(_uiBuilding))
-        {
-            _productionPanel.Visible = false;
-            return;
-        }
-
-        _productionPanel.Visible = true;
-        _productionTitle.Text = $"{_uiBuilding.DisplayName} · 生产";
-
-        var models = _production.ModelsFor(_uiBuilding.Kind);
-        for (int i = 0; i < _modelButtons.Length; i++)
-        {
-            bool active = i < models.Length;
-            _modelButtons[i].Visible = active;
-            _modelButtons[i].Disabled = !active;
-            if (active)
-            {
-                _modelButtons[i].Text = ProductionManager.ModelName(models[i]);
-                _modelButtons[i].ButtonPressed = models[i] == _orderKind;
-            }
-        }
-
-        for (int i = 0; i < _sizeButtons.Length; i++)
-        {
-            _sizeButtons[i].ButtonPressed = i + 3 == _orderUnits;
-        }
-
-        var captains = _production.Captains;
-        for (int i = 0; i < _captainButtons.Length; i++)
-        {
-            if (i == 0)
-            {
-                _captainButtons[i].Text = "无队长";
-                _captainButtons[i].Disabled = false;
-            }
-            else if (i - 1 < captains.Count)
-            {
-                var captain = captains[i - 1];
-                _captainButtons[i].Text = $"{captain.Name}·{captain.OriginName}";
-                _captainButtons[i].Disabled = !captain.IsAlive || captain.InUse;
-            }
-            else
-            {
-                _captainButtons[i].Disabled = true;
-            }
-
-            _captainButtons[i].ButtonPressed = i == _orderCaptain;
-        }
-
-        _productionStatus.Text =
-            _production.StatusOf(_uiBuilding) +
-            $"\n废铁 {_resources.Get(ResourceKind.Scrap):F0}    合成编队 {CountPlayerCombatFormations()} / {ProductionManager.MaxFormations}";
-    }
-
-    private int CountPlayerCombatFormations()
-    {
-        int count = 0;
-        foreach (var formation in _formations)
-        {
-            if (formation.IsPlayer && formation.Hp > 0f && formation.IsCombatFormation)
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
-    private static PanelContainer MakePanel(Theme theme)
-    {
-        var panel = new PanelContainer { Theme = theme, MouseFilter = Control.MouseFilterEnum.Ignore };
-        var style = new StyleBoxFlat { BgColor = new Color(0.04f, 0.06f, 0.05f, 0.78f) };
-        style.SetCornerRadiusAll(6);
-        style.ContentMarginLeft = 12f;
-        style.ContentMarginRight = 12f;
-        style.ContentMarginTop = 8f;
-        style.ContentMarginBottom = 8f;
-        panel.AddThemeStyleboxOverride("panel", style);
-        return panel;
-    }
-
-    private static Label MakeLabel(string text, Theme theme, int fontSize = 15, Color? color = null)
-    {
-        var label = new Label
-        {
-            Text = text,
-            Theme = theme,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        label.AddThemeFontSizeOverride("font_size", fontSize);
-        if (color.HasValue)
-        {
-            label.AddThemeColorOverride("font_color", color.Value);
-        }
-
-        return label;
-    }
-
     private void SpawnFormations()
     {
         SpawnFormation(Formation.CreateLightTank(), TankSpawn);
@@ -1238,6 +535,7 @@ public partial class BattleManager : Node3D
     private void SetSelected(Formation formation)
     {
         _selected = formation;
+        CancelHudCommand();
         foreach (var f in _formations)
         {
             if (f.Highlight != null)
@@ -2363,181 +1661,6 @@ public partial class BattleManager : Node3D
         _cursor.MaterialOverride = ok ? _cursorOk : _cursorBad;
     }
 
-    private void UpdateHud()
-    {
-        if (_uiBuilding != null)
-        {
-            RefreshProductionPanel();
-        }
-
-        if (_selectedBuilding != null)
-        {
-            var building = _selectedBuilding;
-            string owner = building.IsPlayer ? "我方" : "敌方";
-            string powerLine = building.Kind == BuildingKind.PowerPlant
-                ? $"发电: {building.PowerOutput}（受岗位与连通影响）"
-                : building.PowerLoad > 0
-                    ? $"电力负载: {building.PowerLoad}    供电: {(building.PowerSatisfied ? "正常" : "被限电 ×0.5")}"
-                    : "无电力负载";
-            string connected = building.Connected ? "已连通" : "断连（效率 ×0.5，持续衰减）";
-            string jobs = building.JobSlots > 0
-                ? $"岗位: {building.StaffedJobs} / {building.JobSlots}"
-                : "岗位: 无需求";
-            string storage = _resources != null && _resources.CapacityOf(building) > 0f
-                ? $"\n仓储上限: +{_resources.CapacityOf(building):F0} / 种资源（断连时不生效）"
-                : string.Empty;
-            _infoLabel.Text =
-                $"{owner}{building.DisplayName}\n耐久: {building.Hp:F0} / {building.MaxHp:F0}    护甲: {building.Armor:F0}\n" +
-                $"{connected}\n{powerLine}\n{jobs}    效率: {building.Efficiency * 100f:F0}%{storage}" +
-                $"{(building.UnderSandstorm ? "\n沙暴中：结构持续受损" : string.Empty)}";
-            return;
-        }
-
-        if (_selected == null)
-        {
-            _infoLabel.Text = "未选中单位\n左键点击编队或建筑进行选择";
-            return;
-        }
-
-        var formation = _selected;
-        string stormLine = Clock.IsStorm ? "\n沙暴影响：视野 -2 格，移速 ×0.6，油耗 ×1.8" : string.Empty;
-        if (formation.IsScienceTeam)
-        {
-            string task;
-            if (formation.CarriedSample.HasValue)
-            {
-                task = $"携带{TechManager.LineName(formation.CarriedSample.Value)}样本，返回核心塔卸货";
-            }
-            else
-            {
-                var ruin = _research.RuinAtPublic(formation.Coord);
-                task = ruin != null && !ruin.Depleted
-                    ? $"正在取样 {formation.SampleProgress / 6f * 100f:F0}%"
-                    : "前往带科技标签的遗迹驻留取样";
-            }
-
-            _infoLabel.Text =
-                $"科考队\n耐久: {formation.Hp:F0} / {formation.MaxHp:F0}    燃油: {formation.Fuel:F0} / {formation.MaxFuel:F0}\n" +
-                $"状态: {task}\n科考队不占 8 编队名额，依赖补给车续航，被击毁会损失科学家与样本";
-            return;
-        }
-
-        if (formation.IsRepairTruck)
-        {
-            string task = formation.RepairTargetBuilding == null
-                ? formation.IsMoving
-                    ? "前往目标"
-                    : "待命（贴近受损建筑自动作业）"
-                : $"维修中 → {formation.RepairTargetBuilding.DisplayName}";
-            _infoLabel.Text =
-                $"维修车\n耐久: {formation.Hp:F0} / {formation.MaxHp:F0}\n状态: {task}{stormLine}\n" +
-                "维修车无武装，贴近受损建筑即可持续修复";
-            return;
-        }
-
-        if (formation.IsTruck)
-        {
-            string task = formation.RefuelTarget == null
-                ? "待命"
-                : formation.IsMoving
-                    ? $"前往 {formation.RefuelTarget.DisplayName}"
-                    : $"为 {formation.RefuelTarget.DisplayName} 加油中";
-            _infoLabel.Text =
-                $"补给车\n载油: {formation.Cargo:F0} / {formation.MaxCargo:F0}\n状态: {task}{stormLine}\n选中补给车后右键友军地面编队可前往加油";
-            return;
-        }
-
-        string fuelState = formation.Fuel <= 0f ? "（耗尽）" : string.Empty;
-        string combat;
-        if (formation.IsCombatant)
-        {
-            string mitigation = string.Empty;
-            if (formation.CurrentTarget != null)
-            {
-                float multiplier = PenetrationMultiplier(
-                    EffectivePenetration(formation, formation.CurrentTarget),
-                    formation.CurrentTarget.Armor);
-                mitigation = $"\n目标装甲: {formation.CurrentTarget.Armor:F0}    穿甲修正: {multiplier * 100f:F0}%";
-            }
-
-            float effectivePen = formation.Penetration;
-            string penNotes = string.Empty;
-            if (formation.CurrentTarget != null
-                && formation.Coord.DistanceTo(formation.CurrentTarget.Coord) <= 1
-                && formation.CloseRangePenMultiplier > 1f)
-            {
-                effectivePen *= formation.CloseRangePenMultiplier;
-                penNotes += $"贴身 ×{formation.CloseRangePenMultiplier:0.#}";
-            }
-
-            if (_map.IsRuins(formation.Coord) && formation.RuinsPenMultiplier > 1f)
-            {
-                effectivePen *= formation.RuinsPenMultiplier;
-                penNotes += penNotes.Length > 0
-                    ? $"，废墟 ×{formation.RuinsPenMultiplier:0.#}"
-                    : $"废墟 ×{formation.RuinsPenMultiplier:0.#}";
-            }
-
-            string penLine = penNotes.Length > 0 ? $"\n穿甲加成: 有效 {effectivePen:F0}（{penNotes}）" : string.Empty;
-
-            combat =
-                $"存活: {formation.AliveUnits}/{formation.Units}    耐久: {formation.Hp:F0} / {formation.MaxHp:F0}\n" +
-                $"当前输出: {CurrentDps(formation):F1} / 秒{mitigation}\n" +
-                $"护甲: {formation.Armor:F0}    穿甲: {formation.Penetration:F0}    射程: {formation.Range} 格    视野: {EffectiveVision(formation)} 格" +
-                $"{penLine}\n";
-        }
-        else
-        {
-            combat = $"耐久: {formation.Hp:F0} / {formation.MaxHp:F0}    视野: {EffectiveVision(formation)} 格\n";
-        }
-
-        string restriction = formation.IsAir
-            ? "空中编队：忽略地面阻挡与地面编队占格"
-            : "地面编队：受地形与编队占格限制";
-        string status = formation.CurrentTarget != null
-            ? $"交战中 → {formation.CurrentTarget.DisplayName}"
-            : formation.CurrentBuildingTarget != null
-                ? $"攻击建筑 → {formation.CurrentBuildingTarget.DisplayName}"
-                : formation.CurrentNestTarget != null
-                    ? $"清剿巢穴 → {formation.CurrentNestTarget.DisplayName}"
-                    : formation.IsMoving
-                        ? "移动中"
-                        : "待命";
-        string captainLine = formation.Captain == null
-            ? string.Empty
-            : $"\n队长: {formation.Captain.Name}（{formation.Captain.OriginName}·擅长{formation.Captain.Specialty}）" +
-              $" {formation.Captain.LevelText}    伤害 ×{formation.CaptainDamageMultiplier:0.###}" +
-              (formation.Garrisoned ? "  [驻防]" : string.Empty);
-        string replenishLine = formation.CanReplenish
-            ? "\n按 R 补员：贴近补给车较慢，回兵营 / 坦克厂 / 机库更快"
-            : string.Empty;
-        _infoLabel.Text =
-            $"{formation.DisplayName}\n燃油: {formation.Fuel:F0} / {formation.MaxFuel:F0}{fuelState}\n" +
-            $"{combat}状态: {status}\n{restriction}{stormLine}{captainLine}{replenishLine}";
-    }
-
-    private void UpdateClockHud()
-    {
-        _dayLabel.Text = $"第 {Clock.Day} 日";
-        if (Clock.IsStorm)
-        {
-            _stormStateLabel.Text = $"沙暴中 · 剩余 {WorldClock.FormatSeconds(Clock.StormRemaining)}";
-            _stormStateLabel.AddThemeColorOverride("font_color", new Color(1f, 0.55f, 0.28f));
-        }
-        else if (Clock.IsWarning)
-        {
-            _stormStateLabel.Text = $"沙暴预警 · {WorldClock.FormatSeconds(Clock.TimeToNextStorm)}";
-            _stormStateLabel.AddThemeColorOverride("font_color", new Color(1f, 0.85f, 0.35f));
-        }
-        else
-        {
-            _stormStateLabel.Text = $"距沙暴 {WorldClock.FormatSeconds(Clock.TimeToNextStorm)}";
-            _stormStateLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.85f, 1f));
-        }
-
-        _stormCycleLabel.Text = $"沙暴轮次 {Clock.StormCount}    间隔 {Clock.GapSeconds:F0} 秒";
-    }
-
     /// <summary>建筑系统接入点：沙暴期间未加固建筑持续受损。</summary>
     private void OnSandstormBuildingDamage(bool active)
     {
@@ -2591,29 +1714,6 @@ public partial class BattleManager : Node3D
         }
     }
 
-    private void UpdateBaseStats()
-    {
-        if (_baseStatsLabel == null || _buildings == null)
-        {
-            return;
-        }
-
-        string power = _buildings.Core == null
-            ? "核心：已损毁"
-            : $"电力 {_buildings.PowerSupplied} / {_buildings.PowerDemand}（产能 {_buildings.PowerOutput}）";
-        string resources = _resources == null
-            ? string.Empty
-            : $"\n废铁 {_resources.Get(ResourceKind.Scrap):F0}  燃料 {_resources.Get(ResourceKind.Fuel):F0}  " +
-              $"食物 {_resources.Get(ResourceKind.Food):F0}\n" +
-              $"药品 {_resources.Get(ResourceKind.Medicine):F0}  知识数据 {_resources.Get(ResourceKind.Data):F0}  " +
-              $"上限 {_resources.Capacity:F0}";
-        _baseStatsLabel.Text =
-            $"基地状态\n{power}\n限电建筑 {_buildings.ShedCount} 座    断连 {_buildings.DisconnectedCount} 座\n" +
-            $"人口 {_buildings.Population}    岗位 {_buildings.AssignedJobs} / {_buildings.TotalJobs}\n" +
-            $"士气 {_buildings.Morale}    床位 {_buildings.HousingCapacity}\n" +
-            $"建筑 {_buildings.Buildings.Count} 座{resources}\n{_victory?.StatusText()}";
-    }
-
     internal void OnStorageDestroyed(Building building)
     {
         _resources?.OnStorageDestroyed(building);
@@ -2651,7 +1751,7 @@ public partial class BattleManager : Node3D
         _messageTimer -= dt;
         if (_messageTimer <= 0f)
         {
-            _messageLabel.Text = string.Empty;
+            _toast.Hide();
         }
     }
 
@@ -2663,6 +1763,7 @@ public partial class BattleManager : Node3D
         }
 
         _messageLabel.Text = text;
+        _toast.Show();
         _messageTimer = 3.5f;
     }
 
