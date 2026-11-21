@@ -44,7 +44,7 @@ internal sealed partial class AshLandscape : Node3D
         }
 
         int width = 2 * map.Radius + 1;
-        _cells = Image.CreateEmpty(width, width, false, Image.Format.Rgb8);
+        _cells = Image.CreateEmpty(width, width, false, Image.Format.Rgba8);
         _cellTexture = ImageTexture.CreateFromImage(_cells);
         var shader = GD.Load<Shader>(TerrainShaderPath);
         _terrain = new ShaderMaterial { Shader = shader };

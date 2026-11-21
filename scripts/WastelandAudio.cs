@@ -98,14 +98,25 @@ public partial class WastelandAudio : Node
 
     public override void _ExitTree()
     {
-        if (_clock == null)
+        if (_clock != null)
         {
-            return;
+            _clock.SandstormWarning -= OnStormWarning;
+            _clock.SandstormStarted -= OnStormStarted;
+            _clock.SandstormEnded -= OnStormEnded;
         }
 
-        _clock.SandstormWarning -= OnStormWarning;
-        _clock.SandstormStarted -= OnStormStarted;
-        _clock.SandstormEnded -= OnStormEnded;
+        ReleasePlayer(_wind);
+        ReleasePlayer(_storm);
+        ReleasePlayer(_machinery);
+        ReleasePlayer(_interface);
+        foreach (var voice in _fieldVoices)
+        {
+            if (voice != null)
+            {
+                voice.Stop();
+                voice.Stream = null;
+            }
+        }
     }
 
     public override void _Process(double delta)
@@ -190,6 +201,15 @@ public partial class WastelandAudio : Node
         };
         AddChild(player);
         return player;
+    }
+
+    private static void ReleasePlayer(AudioStreamPlayer player)
+    {
+        if (player != null)
+        {
+            player.Stop();
+            player.Stream = null;
+        }
     }
 
     private static void SetLoopGain(AudioStreamPlayer player, float gain)
